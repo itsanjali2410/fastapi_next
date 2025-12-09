@@ -1,228 +1,166 @@
-Here is a **perfect, professional, and complete project description** for your chat + ticketing system—suitable for documentation, GitHub README, investor pitch, or internal planning.
+Organizational Chat & Task Management System
+Real-time chat + internal task desk for organizations with admin-controlled user management
 
----
+A secure, multi-tenant organizational communication platform that provides WhatsApp-style real-time chat, task creation, and organization-level team collaboration, built using FastAPI, Next.js, MongoDB, and Socket.io, with mobile support for Android and iOS.
 
-# 🚀 **Project Description – Organizational Chat & Ticketing System (WhatsApp-Style)**
+🚀 Features
+🔐 1. Admin Onboarding & Organization Creation
 
-## **Overview**
+Admin signs up using their email & password.
 
-This project is a **full-featured organizational communication and ticket management platform**, designed as a **secure WhatsApp-style chat system** combined with an **internal ticketing desk** for operational workflows.
-It supports **Android**, **iOS**, and **Web**, with a modern stack comprising:
+Admin provides mandatory organization details:
 
-* **FastAPI** (backend and Socket.io server)
-* **Next.js** (web client)
-* **React Native / Expo** (mobile app for Play Store + App Store)
-* **MongoDB** (primary database)
-* **Socket.io** (real-time messaging & updates)
+Organization name
 
----
+Address
 
-## 🌐 **Purpose**
+Number of users
 
-The system is built for organizations that need:
+Owner name
 
-* Secure internal chat
-* Fast communication between departments
-* Ticket handling between Ops, Sales, Support teams
-* A centralized platform to track customer queries, tasks, and communication logs
-* A mobile app alternative to WhatsApp but within the organization’s control
+Contact number
 
----
+System creates:
 
-## 🎯 **Key Features**
+New organization
 
-### **1. WhatsApp-Style Chat System**
+Admin user assigned to that org
 
-* 1-to-1 Chats
-* Group Chats
-* Delivery status (sent, delivered, seen)
-* User online/offline status
-* File sharing (images, docs, videos)
-* Chat search
-* Socket.io powered real-time updates
-* Admin-controlled communication system
-* Chat list with last message & timestamp
+Admin gets full organization management permissions.
 
----
+👥 2. User Management (Admin Only)
 
-### **2. Ticketing System**
+Admin can manage users inside their own organization:
 
-A built-in helpdesk workflow for Ops/Sales teams.
+Create new users (email + password)
 
-#### **Raise Tickets**
+Edit user details
 
-* Submit details like
+Delete users
 
-  * Name
-  * Destination
-  * Number of pax
-  * Number of children
-  * Travel date
-  * Description/Body
-* Auto-generate ticket ID
-* Assign default status: **OPEN**
+View all users inside the organization
 
-#### **Ticket Dashboard**
+Generate invite links for users to join
 
-* List all tickets
-* Filter by: **OPEN / IN-PROGRESS / CLOSED**
-* Quick view button
+Each invite link has a unique token
 
-#### **Ticket Detail View**
+Users joining via link must enter:
 
-Sections:
+Name
 
-* **A. Customer Details**
-* **B. Main Travel Info**
-* **C. Ticket Status & Action Buttons**
-* **D. Internal Notes / Logs**
-* **E. Communication Feed** between
+Email
 
-  * Ops
-  * Sales
+Password
 
-All updates push instantly via Socket.io.
+💬 3. Real-Time Chat (Admin & Users)
 
----
+WhatsApp-like internal chat system:
 
-### **3. Admin Portal**
+1-to-1 chat
 
-Admins can:
+Organization-wide user list
 
-* Create and manage users inside the organization
-* Create organizations
-* Manage departments (Ops, Sales, Support)
-* Control user permissions
-* View activity logs
-* View ticket analytics
+Online/offline indicators
 
----
+Typing indicators
 
-### **4. Mobile App (Android + iOS)**
+Message seen / delivered status
 
-A full mobile version so teams can chat and update tickets on the go.
+File sharing (images/docs/videos)
 
-#### Mobile functionality:
+Chat list with last message preview
 
-* All chat features
-* Ticket creation
-* Ticket updates
-* Notifications (FCM / APNS)
-* User online/offline presence
-* Attachments support
+Real-time updates using Socket.io
 
-The mobile app will be built using:
+Only users within the same organization can chat.
 
-* **React Native + Expo + Zustand/Redux**
-  And published to:
-* **Google Play Store**
-* **Apple App Store**
+📌 4. Task Management System
 
----
+Both admin & users can:
 
-## 🔐 **Security**
+Create tasks
 
-* JWT-based authentication
-* Organization-scoped users
-* Role-based access control (RBAC)
-* Encrypted file storage
-* Strict tenant isolation
-* HTTPS enforced communication
+Assign tasks to any user inside same organization
 
----
+View task list
 
-## 🚀 **Technology Stack**
+Add descriptions, due date, priority, and attachments
 
-### **Backend**
+Add comments/chat inside each task
 
-* **FastAPI**
-* **Socket.io ASGI**
-* **MongoDB / Mongoose-like ODM**
-* **Redis (optional for scaling sockets)**
+Track task status:
 
-### **Frontend (Web)**
+OPEN
 
-* **Next.js 14**
-* **TypeScript**
-* **Socket.io client**
-* **Tailwind / Styled Components**
+IN_PROGRESS
 
-### **Mobile App**
+DONE
 
-* **React Native (Expo)**
-* **Socket.io client**
-* **Secure Storage**
-* **Push Notifications**
+Real-time updates are sent when:
 
-### **Deployment**
+A task is created
 
-* Docker (optional)
-* Nginx / Reverse proxy
-* PM2 / Uvicorn for ASGI
-* DigitalOcean / AWS / GCP
+Assigned
 
----
+Updated
 
-## 🧩 **Architecture Overview**
+Status changes
 
-### **1. REST API**
+New comments added
 
-Used for:
+🔗 5. Invite Link System
 
-* Auth
-* User creation
-* Ticket CRUD
-* Fetching messages
+Admins can generate invite links to onboard new users easily:
 
-### **2. Socket.io**
+Each link has a unique token
 
-Used for:
+One-time use
 
-* Real-time chat
-* Ticket updates
-* Typing indicators
-* Live status updates
+User fills signup form and joins org
 
-### **3. MongoDB Collections**
+Admin can see pending invitations
 
-* Users
-* Organizations
-* Messages
-* Chats
-* Tickets
-* Ticket Notes
-* Ticket Chat
-* Files
-* Device tokens
+🌐 6. Multi-Tenant Architecture
 
-Everything is optimized for scale.
+Every organization is completely isolated
 
----
+Users cannot view other organizations
 
-## 🛠 Why MongoDB is Perfect for This?
+All chats, tasks, and members are scoped to one org
 
-* Chat messages = high volume → ideal for document-based storage
-* Flexible schema for ticket metadata
-* Fast indexing for chat lists
-* Horizontal scalability (Replica sets, sharding)
-* JSON-like structure fits perfectly with socket flows
+Only superuser (you) can see all organizations via database
 
----
+🛠️ Tech Stack
+Backend
 
-## 📱 App Store + Play Store
+FastAPI
 
-The system will be packaged into a cross-platform React Native app that includes:
+Python
 
-* Login
-* Chat list
-* Messages
-* Task list
-* Tasks detail
-* Push notifications
-* Offline mode
+Socket.io ASGI
 
-Will be submitted to:
+JWT Authentication
 
-* **Google Play Store**
-* **Apple App Store** (with required Apple validations)
+MongoDB (via Motor or ODM)
 
+Frontend (Web)
+
+Next.js 14
+
+React
+
+TypeScript
+
+Socket.io-client
+
+Tailwind / Styled Components
+
+Mobile App
+
+React Native / Expo
+
+Socket.io-client
+
+Secure storage
+
+Push notifications
