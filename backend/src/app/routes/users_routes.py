@@ -52,6 +52,42 @@ async def create_user(
         "is_active": new_user.is_active
     }
 
+@router.get("/{user_id}", response_model=UserResponse)
+async def get_user(
+    user_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+    user_service: UserService = Depends(get_user_service)
+):
+    """Get a single user by ID (must be in same organization)"""
+    if not current_user.org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User must belong to an organization"
+        )
+    
+    user = await user_service.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Verify user is in the same organization
+    if user.org_id != current_user.org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot access user outside your organization"
+        )
+    
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "role": user.role,
+        "org_id": user.org_id,
+        "is_active": user.is_active
+    }
+
 @router.get("/", response_model=List[UserResponse])
 async def get_org_users(
     current_user: UserInDB = Depends(get_current_user),

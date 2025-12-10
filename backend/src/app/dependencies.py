@@ -2,7 +2,7 @@
 Dependency injection for FastAPI routes
 """
 from typing import Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from src.app.core.config import settings
@@ -12,12 +12,14 @@ from src.app.services.org_service import OrgService
 from src.app.services.task_service import TaskService
 from src.app.services.chat_service import ChatService
 from src.app.services.invite_service import InviteService
+from src.app.services.group_chat_service import GroupChatService
+from src.app.services.user_status_service import UserStatusService
 from src.app.models.user import UserInDB
 
 # Import services for dependency injection
 from src.app.db.mongo import get_database
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 async def get_user_service(db=Depends(get_database)) -> UserService:
     """Get UserService instance"""
@@ -39,15 +41,38 @@ async def get_invite_service(db=Depends(get_database)) -> InviteService:
     """Get InviteService instance"""
     return InviteService(db)
 
+async def get_group_chat_service(db=Depends(get_database)) -> GroupChatService:
+    """Get GroupChatService instance"""
+    return GroupChatService(db)
+
+async def get_user_status_service(db=Depends(get_database)) -> UserStatusService:
+    """Get UserStatusService instance"""
+    return UserStatusService(db)
+
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     user_service: UserService = Depends(get_user_service)
 ) -> UserInDB:
     """
     Verify JWT token and return current user
-    Extract user from the token and fetch from database
+    Supports both Authorization header and HttpOnly cookies
     """
-    token = credentials.credentials
+    token = None
+    
+    # First, try to get token from Authorization header
+    if credentials:
+        token = credentials.credentials
+    else:
+        # If no header, try to get token from cookie
+        token = request.cookies.get("access_token")
+    
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])

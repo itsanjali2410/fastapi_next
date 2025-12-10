@@ -10,8 +10,8 @@ aiofiles==23.2.1
 httpx==0.25.2
 pytest==7.4.3
 pytest-asyncio==0.21.1
-python-dotenv==1.0.0
 email-validator==2.4.0
 jose==1.16.0
 motor==3.7.1
 python-socketio==5.11.0
+bcrypt==4.1.2

@@ -17,3 +17,7 @@ class MessageInDB(BaseModel):
     is_read: bool = False
 
 
+class SendMessageRequest(BaseModel):
+    sender_id: str
+    receiver_id: str
+    text: str

@@ -10,8 +10,56 @@ from src.app.services.org_service import OrgService
 from src.app.models.user import UserInDB
 from src.app.core.security import get_password_hash
 from typing import List
+from src.app.db.mongo import get_database
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 router = APIRouter()
+
+@router.get("", response_model=List[InviteLinkResponse])
+async def get_invite_links(
+    current_user: UserInDB = Depends(get_current_admin_user),
+    invite_service: InviteService = Depends(get_invite_service)
+):
+    """Get all invite links for the organization - admin only"""
+    if not current_user.org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Admin must have an organization"
+        )
+    
+    invites = await invite_service.get_org_invites(current_user.org_id)
+    
+    result = []
+    for invite in invites:
+        invite_url = f"/invite/{invite.token}"
+        result.append({
+            "id": invite.id,
+            "org_id": invite.org_id,
+            "token": invite.token,
+            "invite_url": invite_url,
+            "created_by": invite.created_by,
+            "is_used": invite.is_used,
+            "used_by": invite.used_by,
+            "expires_at": invite.expires_at,
+            "created_at": invite.created_at
+        })
+    
+    return result
+
+@router.delete("/{invite_id}", response_model=dict)
+async def delete_invite_link(
+    invite_id: str,
+    current_user: UserInDB = Depends(get_current_admin_user),
+    invite_service: InviteService = Depends(get_invite_service)
+):
+    """Delete an invite link - admin only"""
+    success = await invite_service.delete_invite(invite_id, current_user.org_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invite link not found"
+        )
+    return {"message": "Invite link deleted successfully"}
 
 @router.post("/create", response_model=InviteLinkResponse)
 async def create_invite_link(

@@ -1,26 +1,50 @@
 @import "tailwindcss";
 
 :root {
+  /* Color Palette */
+  --primary-blue: #00AEEF;
+  --dark-blue: #0D58A6;
+  --chat-accent: #23A7F2;
+  --light-blue: #B2E9FB;
+  --sidebar-blue: #073B82;
+  --primary-text: #333333;
+  --secondary-text: #666666;
+  --light-bg: #F5F7FA;
+  --border-gray: #DAE1E7;
+  --success: #5CB85C;
+  --warning: #F0AD4E;
+  --danger: #D9534F;
+  --info: #5BC0DE;
+  
+  /* Background and foreground */
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #333333;
 }
 
 @theme inline {
+  --color-primary-blue: var(--primary-blue);
+  --color-dark-blue: var(--dark-blue);
+  --color-chat-accent: var(--chat-accent);
+  --color-light-blue: var(--light-blue);
+  --color-sidebar-blue: var(--sidebar-blue);
+  --color-primary-text: var(--primary-text);
+  --color-secondary-text: var(--secondary-text);
+  --color-light-bg: var(--light-bg);
+  --color-border-gray: var(--border-gray);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-roboto-slab: var(--font-roboto-slab);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--light-bg);
+  color: var(--primary-text);
+  font-family: "Roboto Slab", serif;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  font-style: normal;
 }

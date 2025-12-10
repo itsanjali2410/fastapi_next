@@ -21,6 +21,14 @@ class MessageResponse(BaseModel):
     is_read: bool
     sender_name: Optional[str] = None
     receiver_name: Optional[str] = None
+    reply_to: Optional[str] = None
+    reply_to_content: Optional[str] = None
+    edited: Optional[bool] = False
+    edited_at: Optional[datetime] = None
+    deleted: Optional[bool] = False
+    reactions: Optional[List[dict]] = None
+    delivery_status: Optional[dict] = None
+    group_chat_id: Optional[str] = None
 
 class MessageHistoryResponse(BaseModel):
     """Schema for message history response"""

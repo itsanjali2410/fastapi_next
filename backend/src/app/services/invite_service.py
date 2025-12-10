@@ -85,3 +85,14 @@ class InviteService:
             invites.append(InviteLinkInDB(**invite_data))
         return invites
 
+    async def delete_invite(self, invite_id: str, org_id: str) -> bool:
+        """Delete an invite link"""
+        try:
+            result = await self.collection.delete_one({
+                "_id": ObjectId(invite_id),
+                "org_id": org_id
+            })
+            return result.deleted_count > 0
+        except Exception:
+            return False
+
