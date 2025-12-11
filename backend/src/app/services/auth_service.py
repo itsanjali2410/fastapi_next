@@ -103,8 +103,9 @@ async def rotate_refresh_token(db, old_refresh_token: str):
         raise HTTPException(status_code=401, detail="Refresh token reuse detected")
 
     # Generate new tokens
-    # Use the local create_access_token function (with expires_minutes=15)
-    new_access = create_access_token({"sub": user_id}, expires_minutes=15)
+    # Use the security module's create_access_token for consistency
+    from src.app.core.security import create_access_token
+    new_access = create_access_token({"sub": user_id})
     new_refresh = create_refresh_token({"sub": user_id})
 
     # Save rotated refresh token

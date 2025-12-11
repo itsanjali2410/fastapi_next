@@ -23,25 +23,20 @@ export default function CreateGroupPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
-  const [existingGroups, setExistingGroups] = useState<string[]>([]);
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchUsers = async () => {
       try {
-        const [usersResponse, groupsResponse] = await Promise.all([
-          apiClient.get<{ users: User[] }>('/messages/users'),
-          apiClient.get<{ groups: Array<{ id: string; name: string }> }>('/chat/groups').catch(() => ({ groups: [] }))
-        ]);
-        setAvailableUsers(usersResponse.users || []);
-        setExistingGroups((groupsResponse.groups || []).map(g => g.name.toLowerCase()));
+        const response = await apiClient.get<{ users: User[] }>('/messages/users');
+        setAvailableUsers(response.users || []);
       } catch (error) {
-        console.error('Failed to fetch data:', error);
+        console.error('Failed to fetch users:', error);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchData();
+    fetchUsers();
   }, []);
 
   const toggleUser = (userId: string) => {
@@ -63,12 +58,6 @@ export default function CreateGroupPage() {
 
     if (selectedUsers.length === 0) {
       setError('Select at least one member');
-      return;
-    }
-
-    // Check for duplicate group name
-    if (existingGroups.includes(name.trim().toLowerCase())) {
-      setError('A group with this name already exists');
       return;
     }
 

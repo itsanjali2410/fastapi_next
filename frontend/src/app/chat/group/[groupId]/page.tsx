@@ -16,6 +16,13 @@ export default function GroupChatPage() {
       try {
         const group = await apiClient.get<{ name: string }>(`/chat/groups/${groupId}`);
         setGroupName(group.name);
+        
+        // Mark all messages as read when opening group
+        try {
+          await apiClient.post(`/chat/groups/${groupId}/mark-read`);
+        } catch (error) {
+          console.error('Failed to mark messages as read:', error);
+        }
       } catch (error) {
         console.error('Failed to fetch group:', error);
       } finally {

@@ -79,13 +79,6 @@ class SocketIOManager:
                     # Get user's org_id
                     user = await user_service.get_user_by_id(user_id)
                     if user and user.org_id:
-                        # Join user to all their group chat rooms
-                        user_groups = await group_service.get_user_groups(user_id, user.org_id)
-                        for group in user_groups:
-                            room_name = f"group_{group.id}"
-                            await self.sio.enter_room(sid, room_name)
-                            print(f"User {user_id} joined group room: {room_name}")
-                        
                         # Get all org members
                         from bson import ObjectId
                         org = await db.organizations.find_one({"_id": ObjectId(user.org_id)})
@@ -104,6 +97,13 @@ class SocketIOManager:
                                                 'last_seen': status_obj.last_seen.isoformat() if hasattr(status_obj.last_seen, 'isoformat') else str(status_obj.last_seen),
                                                 'user_name': user.name if user else None
                                             }, room=member_socket)
+                        
+                        # Auto-join user to all their groups
+                        groups = await group_service.get_user_groups(user_id, user.org_id)
+                        for group in groups:
+                            room_name = f"group_{group.id}"
+                            await self.sio.enter_room(sid, room_name)
+                            print(f"User {user_id} auto-joined group {group.id}")
                 except Exception as e:
                     print(f"Error updating user status on connect: {e}")
             else:
@@ -170,24 +170,186 @@ class SocketIOManager:
                 await self.sio.enter_room(sid, room)
                 await self.sio.emit('joined_room', {'room': room}, room=sid)
         
-        @self.sio.on('typing')
-        async def on_typing(sid, data):
-            """Handle typing indicator with sender_id and receiver_id"""
-            chat_id = data.get('chat_id')
-            is_group = data.get('is_group', False)
-            receiver_id = data.get('receiver_id')  # For 1-to-1 chats
-            
-            # Get user_id (sender_id) from socket
-            sender_id = None
-            for uid, socket_id in self.user_sockets.items():
-                if socket_id == sid:
-                    sender_id = uid
-                    break
-            
-            if not sender_id or not chat_id:
+        @self.sio.on('join_group')
+        async def on_join_group(sid, data):
+            """Handle joining a group room"""
+            group_id = data.get('groupId') or data.get('group_id')
+            if not group_id:
                 return
             
-            # Emit typing to the other user(s) with sender_id and receiver_id
+            # Get user_id from socket
+            user_id = None
+            for uid, socket_id in self.user_sockets.items():
+                if socket_id == sid:
+                    user_id = uid
+                    break
+            
+            if not user_id:
+                return
+            
+            # Verify user is a member of the group
+            from src.app.db.mongo import get_database
+            from src.app.services.group_chat_service import GroupChatService
+            db = get_database()
+            group_service = GroupChatService(db)
+            group = await group_service.get_group_chat(group_id)
+            
+            if group and user_id in group.members:
+                # Join the group room
+                room_name = f"group_{group_id}"
+                await self.sio.enter_room(sid, room_name)
+                await self.sio.emit('joined_group', {'groupId': group_id}, room=sid)
+                print(f"User {user_id} joined group {group_id}")
+        
+        @self.sio.on('group_message')
+        async def on_group_message(sid, data):
+            """Handle group message"""
+            group_id = data.get('groupId') or data.get('group_id')
+            sender_id = data.get('senderId') or data.get('sender_id')
+            content = data.get('content')
+            
+            if not group_id or not sender_id or not content:
+                return
+            
+            # Verify user is a member of the group
+            from src.app.db.mongo import get_database
+            from src.app.services.group_chat_service import GroupChatService
+            from src.app.services.messages_service import MessagesService
+            from src.app.services.user_service import UserService
+            from datetime import datetime
+            
+            db = get_database()
+            group_service = GroupChatService(db)
+            messages_service = MessagesService(db)
+            user_service = UserService(db)
+            
+            group = await group_service.get_group_chat(group_id)
+            if not group or sender_id not in group.members:
+                await self.sio.emit('error', {'message': 'Not a member of this group'}, room=sid)
+                return
+            
+            # Get sender info
+            sender = await user_service.get_user_by_id(sender_id)
+            if not sender:
+                return
+            
+            # Save message with readBy initialized with sender
+            message_doc = {
+                "organization_id": group.organization_id,
+                "sender_id": sender_id,
+                "group_chat_id": group_id,
+                "content": content,
+                "edited": False,
+                "deleted": False,
+                "reactions": [],
+                "delivery_status": {},
+                "readBy": [sender_id],  # Initialize with sender
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+                "is_read": False
+            }
+            
+            result = await messages_service.collection.insert_one(message_doc)
+            message_doc["_id"] = str(result.inserted_id)
+            
+            # Update conversation participants
+            participants = [{"user_id": member_id, "display_name": group.name} for member_id in group.members]
+            await messages_service.upsert_conversation_participants(
+                conversation_id=group_id,
+                convo_type="group",
+                participants=participants,
+                last_message_content=content,
+                last_message_at=datetime.utcnow(),
+                sender_id=sender_id,
+                group_id=group_id
+            )
+            
+            # Prepare message payload
+            message_payload = {
+                "id": message_doc["_id"],
+                "organization_id": message_doc["organization_id"],
+                "sender_id": message_doc["sender_id"],
+                "group_chat_id": message_doc["group_chat_id"],
+                "content": message_doc["content"],
+                "created_at": message_doc["created_at"].isoformat(),
+                "is_read": message_doc["is_read"],
+                "sender_name": sender.name
+            }
+            
+            # Emit to all group members
+            room_name = f"group_{group_id}"
+            await self.sio.emit('group_message', message_payload, room=room_name)
+            
+            # Calculate and emit unread counts for other members
+            messages_collection = messages_service.collection
+            for member_id in group.members:
+                if member_id != sender_id:
+                    # Count unread messages for this member
+                    unread_count = await messages_collection.count_documents({
+                        "group_chat_id": group_id,
+                        "readBy": {"$ne": member_id}
+                    })
+                    
+                    # Emit unread update to this member
+                    member_socket = self.user_sockets.get(member_id)
+                    if member_socket:
+                        await self.sio.emit('group_unread_update', {
+                            "groupId": group_id,
+                            "unreadCount": unread_count
+                        }, room=member_socket)
+                
+                # Also emit new_message for chat list updates
+                await self.emit_new_message(member_id, message_payload)
+                await self.emit_chat_list_update(member_id)
+        
+        @self.sio.on('group_typing')
+        async def on_group_typing(sid, data):
+            """Handle group typing indicator"""
+            group_id = data.get('groupId') or data.get('group_id')
+            user_id = data.get('userId') or data.get('user_id')
+            
+            if not group_id:
+                # Get user_id from socket if not provided
+                for uid, socket_id in self.user_sockets.items():
+                    if socket_id == sid:
+                        user_id = uid
+                        break
+            
+            if not user_id or not group_id:
+                return
+            
+            # Verify user is a member of the group
+            from src.app.db.mongo import get_database
+            from src.app.services.group_chat_service import GroupChatService
+            db = get_database()
+            group_service = GroupChatService(db)
+            group = await group_service.get_group_chat(group_id)
+            
+            if group and user_id in group.members:
+                # Emit to all group members except sender
+                room_name = f"group_{group_id}"
+                await self.sio.emit('group_typing', {
+                    'userId': user_id,
+                    'groupId': group_id
+                }, room=room_name, skip_sid=sid)
+        
+        @self.sio.on('typing')
+        async def on_typing(sid, data):
+            """Handle typing indicator"""
+            chat_id = data.get('chat_id')
+            is_group = data.get('is_group', False)
+            
+            # Get user_id from socket
+            user_id = None
+            for uid, socket_id in self.user_sockets.items():
+                if socket_id == sid:
+                    user_id = uid
+                    break
+            
+            if not user_id or not chat_id:
+                return
+            
+            # Emit typing to the other user(s)
             if is_group:
                 # For groups, emit to all members except sender
                 from src.app.db.mongo import get_database
@@ -197,45 +359,27 @@ class SocketIOManager:
                 group = await group_service.get_group_chat(chat_id)
                 if group:
                     for member_id in group.members:
-                        if member_id != sender_id:
+                        if member_id != user_id:
                             member_socket = self.user_sockets.get(member_id)
                             if member_socket:
-                                await self.sio.emit('typing', {
-                                    'sender_id': sender_id,
-                                    'receiver_id': member_id,
-                                    'group_chat_id': chat_id,
-                                    'is_group': True
-                                }, room=member_socket)
+                                await self.sio.emit('typing', {'user_id': user_id}, room=member_socket)
             else:
-                # For 1-to-1, emit to the receiver with sender_id and receiver_id
-                if receiver_id:
-                    receiver_socket = self.user_sockets.get(receiver_id)
-                    if receiver_socket:
-                        await self.sio.emit('typing', {
-                            'sender_id': sender_id,
-                            'receiver_id': receiver_id,
-                            'is_group': False
-                        }, room=receiver_socket)
+                # For 1-to-1, emit to the receiver
+                receiver_socket = self.user_sockets.get(chat_id)
+                if receiver_socket:
+                    await self.sio.emit('typing', {'user_id': user_id}, room=receiver_socket)
     
-    async def emit_new_message(self, receiver_id_or_group_id: str, message: Dict[str, Any]):
-        """Emit new message event to a specific user or group room"""
+    async def emit_new_message(self, receiver_id: str, message: Dict[str, Any]):
+        """Emit new message event to a specific user"""
         if not self.sio:
             return
         
-        # Check if this is a group message
-        if message.get("group_chat_id"):
-            # Emit to group room (use group_chat_id from message)
-            room_name = f"group_{message['group_chat_id']}"
-            await self.sio.emit('new_message', message, room=room_name)
-            print(f"Emitted new_message to group room {room_name}")
+        socket_id = self.user_sockets.get(receiver_id)
+        if socket_id:
+            await self.sio.emit('new_message', message, room=socket_id)
+            print(f"Emitted new_message to user {receiver_id}")
         else:
-            # Emit to specific user (use receiver_id_or_group_id as user_id)
-            socket_id = self.user_sockets.get(receiver_id_or_group_id)
-            if socket_id:
-                await self.sio.emit('new_message', message, room=socket_id)
-                print(f"Emitted new_message to user {receiver_id_or_group_id}")
-            else:
-                print(f"User {receiver_id_or_group_id} not connected, message will be delivered when they reconnect")
+            print(f"User {receiver_id} not connected, message will be delivered when they reconnect")
     
     async def emit_messages_read(self, sender_id: str, receiver_id: str):
         """Emit read receipt to sender"""

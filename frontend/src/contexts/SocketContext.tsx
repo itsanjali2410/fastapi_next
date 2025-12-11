@@ -17,20 +17,11 @@ interface Message {
   created_at: string;
 }
 
-export interface TypingEvent {
-  sender_id: string;
-  receiver_id: string;
-  group_chat_id?: string;
-  is_group: boolean;
-}
-
 interface SocketContextType {
   socket: Socket | null;
   connected: boolean;
   requestNotificationPermission: () => Promise<boolean>;
   showNotification: (title: string, options?: NotificationOptions) => void;
-  onTyping: (callback: (event: TypingEvent) => void) => void;
-  offTyping: (callback: (event: TypingEvent) => void) => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -192,46 +183,41 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
+    // Handle group messages with notifications
+    const handleGroupMessage = (message: Message) => {
+      // Only show notification if message is not from current user
+      if (message.sender_id !== user.id) {
+        const senderName = message.sender_name || 'Someone';
+        const title = `${senderName} (Group)`;
+        const body = message.content || 'New message';
+        
+        // Show desktop notification
+        showNotification(title, {
+          body: body.length > 100 ? body.substring(0, 100) + '...' : body,
+          data: {
+            messageId: message.id,
+            chatId: message.group_chat_id,
+            isGroup: true,
+          },
+        });
+      }
+    };
+
     newSocket.on('new_message', handleNewMessage);
+    newSocket.on('group_message', handleGroupMessage);
 
     socketRef.current = newSocket;
     setSocket(newSocket);
 
     return () => {
       newSocket.off('new_message', handleNewMessage);
+      newSocket.off('group_message', handleGroupMessage);
       newSocket.close();
       socketRef.current = null;
       setSocket(null);
       setConnected(false);
     };
   }, [user?.id, showNotification, requestNotificationPermission]);
-
-  // Typing event handlers
-  const typingCallbacksRef = useRef<Set<(event: TypingEvent) => void>>(new Set());
-
-  useEffect(() => {
-    if (!socket || !connected) return;
-
-    const handleTyping = (event: TypingEvent) => {
-      typingCallbacksRef.current.forEach(callback => {
-        callback(event);
-      });
-    };
-
-    socket.on('typing', handleTyping);
-
-    return () => {
-      socket.off('typing', handleTyping);
-    };
-  }, [socket, connected]);
-
-  const onTyping = useCallback((callback: (event: TypingEvent) => void) => {
-    typingCallbacksRef.current.add(callback);
-  }, []);
-
-  const offTyping = useCallback((callback: (event: TypingEvent) => void) => {
-    typingCallbacksRef.current.delete(callback);
-  }, []);
 
   return (
     <SocketContext.Provider
@@ -240,8 +226,6 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         connected,
         requestNotificationPermission,
         showNotification,
-        onTyping,
-        offTyping,
       }}
     >
       {children}

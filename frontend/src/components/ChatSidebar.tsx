@@ -10,12 +10,18 @@ import { useSocket } from '@/contexts/SocketContext';
 
 interface Chat {
   id: string;
+  type?: "personal" | "group";
+  chatId?: string;
   receiver_id?: string;
   receiver_name?: string;
   group_chat_id?: string;
   name: string;
   last_message?: string;
   last_message_time?: string;
+  lastMessage?: {
+    content: string;
+    createdAt: string | null;
+  };
   unread_count?: number;
   is_group?: boolean;
   avatar?: string;
@@ -41,78 +47,73 @@ export function ChatSidebar() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [chatsData, groupsData, statusesData, usersData] = await Promise.all([
+        const [chatsData, statusesData, usersData] = await Promise.all([
           apiClient.get<Chat[]>('/chat/list').catch(() => []),
-          apiClient.get<{ groups: Chat[] }>('/chat/groups').catch(() => ({ groups: [] })),
           apiClient.get<{ statuses: UserStatus[] }>('/users/status').catch(() => ({ statuses: [] })),
           apiClient.get<Array<{ id: string; name: string; email: string }>>('/users').catch(() => []),
         ]);
 
         // Create status map
         const statusMap: Record<string, UserStatus> = {};
-        (statusesData.statuses || []).forEach(status => {
+        (statusesData.statuses || []).forEach((status: UserStatus) => {
           statusMap[status.user_id] = status;
         });
         setUserStatuses(statusMap);
 
-        // Normalize individual chats
-        const normalizedChats: Chat[] = chatsData.map(chat => ({
+        // Normalize chats from unified endpoint
+        const normalizedChats: Chat[] = chatsData.map((chat: Chat) => ({
           ...chat,
+          id: chat.chatId || chat.id || chat.receiver_id || chat.group_chat_id || '',
           name: chat.receiver_name || chat.name || 'Unknown',
-          is_group: false,
-        }));
-
-        // Normalize group chats with last_message_time
-        const normalizedGroups: Chat[] = (groupsData.groups || []).map((group: { id: string; name: string; last_message?: string; last_message_timestamp?: string; last_message_time?: string; unread_count?: number }) => ({
-          ...group,
-          id: group.id,
-          name: group.name,
-          last_message: group.last_message,
-          last_message_time: group.last_message_timestamp || group.last_message_time,
-          unread_count: group.unread_count || 0,
-          is_group: true,
+          is_group: chat.type === 'group' || chat.is_group || false,
         }));
 
         // Create a set of user IDs that already have chats
         const existingChatUserIds = new Set(
-          normalizedChats.map(chat => chat.receiver_id || chat.id).filter(Boolean)
+          normalizedChats
+            .filter((chat: Chat) => chat.type === 'personal' || !chat.is_group)
+            .map((chat: Chat) => chat.receiver_id || chat.id)
+            .filter(Boolean)
         );
 
         // Normalize org users that don't have chats yet
         const orgUsersWithoutChats: Chat[] = (usersData || [])
-          .filter(u => u.id !== user?.id && !existingChatUserIds.has(u.id))
-          .map(orgUser => ({
+          .filter((u: { id: string; name: string; email: string }) => u.id !== user?.id && !existingChatUserIds.has(u.id))
+          .map((orgUser: { id: string; name: string; email: string }) => ({
             id: orgUser.id,
+            type: 'personal',
+            chatId: orgUser.id,
             receiver_id: orgUser.id,
             receiver_name: orgUser.name,
             name: orgUser.name,
+            lastMessage: {
+              content: '',
+              createdAt: null,
+            },
             last_message: undefined,
             last_message_time: undefined,
             unread_count: 0,
             is_group: false,
           }));
 
-        // Combine all chats into a single list
-        const combinedChats = [
-          ...normalizedChats,
-          ...normalizedGroups,
-          ...orgUsersWithoutChats,
-        ];
+        // Merge all chats
+        const merged = [...normalizedChats, ...orgUsersWithoutChats];
 
-        // Sort by last_message_time (most recent first), then alphabetically
-        combinedChats.sort((a, b) => {
-          // Chats with messages come first
-          if (a.last_message_time && !b.last_message_time) return -1;
-          if (!a.last_message_time && b.last_message_time) return 1;
-          // If both have timestamps, sort by most recent
-          if (a.last_message_time && b.last_message_time) {
-            return new Date(b.last_message_time).getTime() - new Date(a.last_message_time).getTime();
-          }
-          // If neither has timestamp, sort alphabetically
-          return a.name.localeCompare(b.name);
+        // Sort using lastMessage.createdAt (MOST IMPORTANT FIX)
+        const sorted = merged.sort((a, b) => {
+          const timeA = a.lastMessage?.createdAt
+            ? new Date(a.lastMessage.createdAt).getTime()
+            : (a.last_message_time ? new Date(a.last_message_time).getTime() : 0);
+          
+          const timeB = b.lastMessage?.createdAt
+            ? new Date(b.lastMessage.createdAt).getTime()
+            : (b.last_message_time ? new Date(b.last_message_time).getTime() : 0);
+          
+          // Latest first (descending order)
+          return timeB - timeA;
         });
 
-        setAllChats(combinedChats);
+        setAllChats(sorted);
       } catch (error) {
         console.error('Failed to fetch chat data:', error);
       } finally {
@@ -144,65 +145,73 @@ export function ChatSidebar() {
 
     const refreshChatList = async () => {
       try {
-        const [chatsData, groupsData, statusesData, usersData] = await Promise.all([
+        const [chatsData, statusesData, usersData] = await Promise.all([
           apiClient.get<Chat[]>('/chat/list').catch(() => []),
-          apiClient.get<{ groups: Chat[] }>('/chat/groups').catch(() => ({ groups: [] })),
           apiClient.get<{ statuses: UserStatus[] }>('/users/status').catch(() => ({ statuses: [] })),
           apiClient.get<Array<{ id: string; name: string; email: string }>>('/users').catch(() => []),
         ]);
 
         // Update status map
         const statusMap: Record<string, UserStatus> = {};
-        (statusesData.statuses || []).forEach(status => {
+        (statusesData.statuses || []).forEach((status: UserStatus) => {
           statusMap[status.user_id] = status;
         });
         setUserStatuses(statusMap);
 
-        // Normalize and combine chats (same logic as initial fetch)
-        const normalizedChats: Chat[] = chatsData.map(chat => ({
+        // Normalize chats from unified endpoint
+        const normalizedChats: Chat[] = chatsData.map((chat: Chat) => ({
           ...chat,
+          id: chat.chatId || chat.id || chat.receiver_id || chat.group_chat_id || '',
           name: chat.receiver_name || chat.name || 'Unknown',
-          is_group: false,
+          is_group: chat.type === 'group' || chat.is_group || false,
         }));
 
-        const normalizedGroups: Chat[] = (groupsData.groups || []).map(group => ({
-          ...group,
-          is_group: true,
-        }));
-
+        // Create a set of user IDs that already have chats
         const existingChatUserIds = new Set(
-          normalizedChats.map(chat => chat.receiver_id || chat.id).filter(Boolean)
+          normalizedChats
+            .filter((chat: Chat) => chat.type === 'personal' || !chat.is_group)
+            .map((chat: Chat) => chat.receiver_id || chat.id)
+            .filter(Boolean)
         );
 
+        // Normalize org users that don't have chats yet
         const orgUsersWithoutChats: Chat[] = (usersData || [])
-          .filter(u => u.id !== user?.id && !existingChatUserIds.has(u.id))
-          .map(orgUser => ({
+          .filter((u: { id: string; name: string; email: string }) => u.id !== user?.id && !existingChatUserIds.has(u.id))
+          .map((orgUser: { id: string; name: string; email: string }) => ({
             id: orgUser.id,
+            type: 'personal',
+            chatId: orgUser.id,
             receiver_id: orgUser.id,
             receiver_name: orgUser.name,
             name: orgUser.name,
+            lastMessage: {
+              content: '',
+              createdAt: null,
+            },
             last_message: undefined,
             last_message_time: undefined,
             unread_count: 0,
             is_group: false,
           }));
 
-        const combinedChats = [
-          ...normalizedChats,
-          ...normalizedGroups,
-          ...orgUsersWithoutChats,
-        ];
+        // Merge all chats
+        const merged = [...normalizedChats, ...orgUsersWithoutChats];
 
-        combinedChats.sort((a, b) => {
-          if (a.last_message_time && !b.last_message_time) return -1;
-          if (!a.last_message_time && b.last_message_time) return 1;
-          if (a.last_message_time && b.last_message_time) {
-            return new Date(b.last_message_time).getTime() - new Date(a.last_message_time).getTime();
-          }
-          return a.name.localeCompare(b.name);
+        // Sort using lastMessage.createdAt (MOST IMPORTANT FIX)
+        const sorted = merged.sort((a, b) => {
+          const timeA = a.lastMessage?.createdAt
+            ? new Date(a.lastMessage.createdAt).getTime()
+            : (a.last_message_time ? new Date(a.last_message_time).getTime() : 0);
+          
+          const timeB = b.lastMessage?.createdAt
+            ? new Date(b.lastMessage.createdAt).getTime()
+            : (b.last_message_time ? new Date(b.last_message_time).getTime() : 0);
+          
+          // Latest first (descending order)
+          return timeB - timeA;
         });
 
-        setAllChats(combinedChats);
+        setAllChats(sorted);
       } catch (error) {
         console.error('Failed to refresh chat list:', error);
       }
@@ -215,7 +224,14 @@ export function ChatSidebar() {
       }));
     };
 
-    const handleNewMessage = (message: { sender_id: string; receiver_id?: string; group_chat_id?: string }) => {
+    interface NewMessageEvent {
+      sender_id: string;
+      receiver_id?: string;
+      group_chat_id?: string;
+      content?: string;
+    }
+
+    const handleNewMessage = (message: NewMessageEvent) => {
       // Only play notification if message is not from current user
       if (message.sender_id !== user?.id) {
         playNotification();
@@ -227,14 +243,29 @@ export function ChatSidebar() {
       refreshChatList();
     };
 
+    const handleGroupUnreadUpdate = (data: { groupId: string; unreadCount: number }) => {
+      // Update unread count for the specific group
+      setAllChats(prev => prev.map(chat => {
+        if (chat.is_group && (chat.group_chat_id === data.groupId || chat.chatId === data.groupId)) {
+          return {
+            ...chat,
+            unread_count: data.unreadCount
+          };
+        }
+        return chat;
+      }));
+    };
+
     socket.on('user_status_update', handleUserStatusUpdate);
     socket.on('new_message', handleNewMessage);
     socket.on('chat_list_update', handleChatListUpdate);
+    socket.on('group_unread_update', handleGroupUnreadUpdate);
 
     return () => {
       socket.off('user_status_update', handleUserStatusUpdate);
       socket.off('new_message', handleNewMessage);
       socket.off('chat_list_update', refreshChatList);
+      socket.off('group_unread_update', handleGroupUnreadUpdate);
     };
   }, [socket, connected, user]);
 
@@ -317,16 +348,17 @@ export function ChatSidebar() {
           {filteredChats.length > 0 ? (
             filteredChats.map((chat) => {
               const status = chat.receiver_id ? userStatuses[chat.receiver_id] : undefined;
+              const chatId = chat.chatId || chat.id || chat.receiver_id || chat.group_chat_id || '';
               const chatUrl = chat.is_group 
-                ? `/chat/group/${chat.id}` 
-                : `/chat/${chat.receiver_id || chat.id}`;
+                ? `/chat/group/${chatId}` 
+                : `/chat/${chatId}`;
               
               return (
                 <Link
-                  key={chat.id}
+                  key={chat.id || chatId}
                   href={chatUrl}
                   className={`block p-3 rounded-lg mb-1 transition ${
-                    isActive(chat.receiver_id || chat.id, chat.is_group || false)
+                    isActive(chatId, chat.is_group || false)
                       ? 'bg-blue-50'
                       : 'hover:bg-gray-50'
                   }`}
@@ -341,16 +373,16 @@ export function ChatSidebar() {
                       >
                         {chat.name.charAt(0).toUpperCase()}
                       </div>
-                      {!chat.is_group && getStatusIndicator(chat.receiver_id)}
+                      {!chat.is_group && getStatusIndicator(chat.receiver_id || chat.chatId)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
                         <h4 className="font-medium text-sm truncate" style={{ color: colors.primaryText }}>
                           {chat.name}
                         </h4>
-                        {chat.last_message_time ? (
+                        {(chat.lastMessage?.createdAt || chat.last_message_time) ? (
                           <span className="text-xs ml-2 whitespace-nowrap" style={{ color: colors.secondaryText }}>
-                            {new Date(chat.last_message_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            {new Date(chat.lastMessage?.createdAt || chat.last_message_time || '').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                           </span>
                         ) : !chat.is_group && status && (
                           <span className="text-xs ml-2 whitespace-nowrap" style={{ color: colors.secondaryText }}>
@@ -360,16 +392,16 @@ export function ChatSidebar() {
                       </div>
                       <div className="flex items-center justify-between mt-1">
                         <p className="text-sm truncate" style={{ color: colors.secondaryText }}>
-                          {chat.last_message || 'No messages yet'}
+                          {chat.lastMessage?.content || chat.last_message || 'No messages yet'}
                         </p>
-                        {chat.unread_count && chat.unread_count > 0 ? (
+                        {chat.unread_count && chat.unread_count > 0 && (
                           <span
                             className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium text-white whitespace-nowrap"
                             style={{ backgroundColor: colors.chatAccent }}
                           >
                             {chat.unread_count}
                           </span>
-                        ) : null}
+                        )}
                       </div>
                     </div>
                   </div>

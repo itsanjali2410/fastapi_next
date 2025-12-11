@@ -121,56 +121,27 @@ async def send_message(
         await socketio_manager.emit_chat_list_update(receiver_id)
         await socketio_manager.emit_chat_list_update(current_user.id)
     elif group_chat_id:
-        # Emit to group room (Socket.io will handle broadcasting to all members)
-        await socketio_manager.emit_new_message(group_chat_id, message_payload)
-        # Also emit chat list update to all group members
+        # Emit to all group members
         from src.app.services.group_chat_service import GroupChatService
         db = get_database()
         group_service = GroupChatService(db)
         group = await group_service.get_group_chat(group_chat_id)
         if group:
             for member_id in group.members:
+                await socketio_manager.emit_new_message(member_id, message_payload)
                 await socketio_manager.emit_chat_list_update(member_id)
     
-    # Build response with all enhanced fields
-    response_dict = {
-        "id": message_doc["_id"],
-        "organization_id": message_doc["organization_id"],
-        "sender_id": message_doc["sender_id"],
-        "receiver_id": message_doc.get("receiver_id", ""),
-        "content": message_doc["content"],
-        "created_at": message_doc["created_at"],
-        "is_read": message_doc["is_read"],
-        "sender_name": current_user.name,
-        "receiver_name": receiver_name
-    }
-    
-    # Add enhanced fields
-    if message_doc.get("reply_to"):
-        response_dict["reply_to"] = message_doc["reply_to"]
-        # Fetch reply_to_content
-        try:
-            from bson import ObjectId
-            original_msg = await messages_service.collection.find_one({"_id": ObjectId(message_doc["reply_to"])})
-            if original_msg:
-                response_dict["reply_to_content"] = original_msg.get("content", "")
-        except:
-            pass
-    
-    if message_doc.get("group_chat_id"):
-        response_dict["group_chat_id"] = message_doc["group_chat_id"]
-    if message_doc.get("edited"):
-        response_dict["edited"] = message_doc["edited"]
-    if message_doc.get("edited_at"):
-        response_dict["edited_at"] = message_doc["edited_at"]
-    if message_doc.get("deleted"):
-        response_dict["deleted"] = message_doc["deleted"]
-    if message_doc.get("reactions"):
-        response_dict["reactions"] = message_doc["reactions"]
-    if message_doc.get("delivery_status"):
-        response_dict["delivery_status"] = message_doc["delivery_status"]
-    
-    return MessageResponse(**response_dict)
+    return MessageResponse(
+        id=message_doc["_id"],
+        organization_id=message_doc["organization_id"],
+        sender_id=message_doc["sender_id"],
+        receiver_id=message_doc.get("receiver_id", ""),
+        content=message_doc["content"],
+        created_at=message_doc["created_at"],
+        is_read=message_doc["is_read"],
+        sender_name=current_user.name,
+        receiver_name=receiver_name
+    )
 
 @router.get("/history/{other_user_id}", response_model=MessageHistoryResponse)
 async def get_message_history(
@@ -238,61 +209,23 @@ async def get_message_history(
     }
     
     # Build message responses using cached user data
-    # Also fetch reply_to_content if reply_to exists
     message_responses = []
-    reply_to_map = {}  # Cache for reply_to content lookups
-    
     for msg in messages_to_return:
         # Use cached user names (only 2 users in conversation)
         sender_name = user_cache.get(msg.sender_id, "Unknown")
         receiver_name = user_cache.get(msg.receiver_id, "Unknown")
         
-        # Fetch reply_to_content if reply_to exists
-        reply_to_content = None
-        if hasattr(msg, 'reply_to') and msg.reply_to:
-            if msg.reply_to not in reply_to_map:
-                # Fetch the original message
-                try:
-                    from bson import ObjectId
-                    original_msg = await messages_service.collection.find_one({"_id": ObjectId(msg.reply_to)})
-                    if original_msg:
-                        reply_to_map[msg.reply_to] = original_msg.get("content", "")
-                    else:
-                        reply_to_map[msg.reply_to] = None
-                except:
-                    reply_to_map[msg.reply_to] = None
-            reply_to_content = reply_to_map.get(msg.reply_to)
-        
-        # Build response dict with all fields including reply_to and reply_to_content
-        response_dict = {
-            "id": msg.id,
-            "organization_id": msg.organization_id,
-            "sender_id": msg.sender_id,
-            "receiver_id": msg.receiver_id,
-            "content": msg.content,
-            "created_at": msg.created_at,
-            "is_read": msg.is_read,
-            "sender_name": sender_name,
-            "receiver_name": receiver_name
-        }
-        
-        # Add enhanced fields if they exist
-        if hasattr(msg, 'reply_to') and msg.reply_to:
-            response_dict["reply_to"] = msg.reply_to
-        if reply_to_content:
-            response_dict["reply_to_content"] = reply_to_content
-        if hasattr(msg, 'edited') and msg.edited:
-            response_dict["edited"] = True
-            if hasattr(msg, 'edited_at') and msg.edited_at:
-                response_dict["edited_at"] = msg.edited_at.isoformat() if hasattr(msg.edited_at, 'isoformat') else str(msg.edited_at)
-        if hasattr(msg, 'deleted') and msg.deleted:
-            response_dict["deleted"] = True
-        if hasattr(msg, 'reactions') and msg.reactions:
-            response_dict["reactions"] = msg.reactions
-        if hasattr(msg, 'delivery_status') and msg.delivery_status:
-            response_dict["delivery_status"] = msg.delivery_status
-        
-        message_responses.append(MessageResponse(**response_dict))
+        message_responses.append(MessageResponse(
+            id=msg.id,
+            organization_id=msg.organization_id,
+            sender_id=msg.sender_id,
+            receiver_id=msg.receiver_id,
+            content=msg.content,
+            created_at=msg.created_at,
+            is_read=msg.is_read,
+            sender_name=sender_name,
+            receiver_name=receiver_name
+        ))
     
     return MessageHistoryResponse(
         messages=message_responses,
@@ -372,57 +305,19 @@ async def get_group_message_history(
         if user:
             user_names[user_id] = user.name
     
-    # Build message responses with reply_to_content
     message_responses = []
-    reply_to_map = {}  # Cache for reply_to content lookups
-    
     for msg in messages_to_return:
-        # Fetch reply_to_content if reply_to exists
-        reply_to_content = None
-        if hasattr(msg, 'reply_to') and msg.reply_to:
-            if msg.reply_to not in reply_to_map:
-                # Fetch the original message
-                try:
-                    from bson import ObjectId
-                    original_msg = await messages_service.collection.find_one({"_id": ObjectId(msg.reply_to)})
-                    if original_msg:
-                        reply_to_map[msg.reply_to] = original_msg.get("content", "")
-                    else:
-                        reply_to_map[msg.reply_to] = None
-                except:
-                    reply_to_map[msg.reply_to] = None
-            reply_to_content = reply_to_map.get(msg.reply_to)
-        
-        # Build response dict with all fields
-        response_dict = {
-            "id": msg.id,
-            "organization_id": msg.organization_id,
-            "sender_id": msg.sender_id,
-            "receiver_id": "",  # Group messages don't have receiver_id
-            "content": msg.content,
-            "created_at": msg.created_at,
-            "is_read": msg.is_read,
-            "sender_name": user_names.get(msg.sender_id, "Unknown"),
-            "receiver_name": None
-        }
-        
-        # Add enhanced fields if they exist
-        if hasattr(msg, 'reply_to') and msg.reply_to:
-            response_dict["reply_to"] = msg.reply_to
-        if reply_to_content:
-            response_dict["reply_to_content"] = reply_to_content
-        if hasattr(msg, 'edited') and msg.edited:
-            response_dict["edited"] = True
-            if hasattr(msg, 'edited_at') and msg.edited_at:
-                response_dict["edited_at"] = msg.edited_at.isoformat() if hasattr(msg.edited_at, 'isoformat') else str(msg.edited_at)
-        if hasattr(msg, 'deleted') and msg.deleted:
-            response_dict["deleted"] = True
-        if hasattr(msg, 'reactions') and msg.reactions:
-            response_dict["reactions"] = msg.reactions
-        if hasattr(msg, 'delivery_status') and msg.delivery_status:
-            response_dict["delivery_status"] = msg.delivery_status
-        
-        message_responses.append(MessageResponse(**response_dict))
+        message_responses.append(MessageResponse(
+            id=msg.id,
+            organization_id=msg.organization_id,
+            sender_id=msg.sender_id,
+            receiver_id="",  # Group messages don't have receiver_id
+            content=msg.content,
+            created_at=msg.created_at,
+            is_read=msg.is_read,
+            sender_name=user_names.get(msg.sender_id, "Unknown"),
+            receiver_name=None
+        ))
     
     return MessageHistoryResponse(
         messages=message_responses,
@@ -730,7 +625,7 @@ async def mark_all_messages_read(
         "is_read": False,
         "organization_id": current_user.org_id
     }
-
+    
     if receiver_id:
         # For 1-to-1: messages where sender is the other user and receiver is current user
         # Only mark messages sent TO current user as read
@@ -740,43 +635,38 @@ async def mark_all_messages_read(
         # For group: all messages in the group (not filtered by receiver_id)
         query["group_chat_id"] = group_chat_id
     
-    # First, fetch all messages that will be updated (before updating them)
-    now = datetime.utcnow()
-    messages_to_update = []
-    async for msg in messages_service.collection.find(query):
-        messages_to_update.append(msg)
-    
     # Update all unread messages
-    if messages_to_update:
-        message_ids = [msg["_id"] for msg in messages_to_update]
-        result = await messages_service.collection.update_many(
-            {"_id": {"$in": message_ids}},
-            {
-                "$set": {
-                    "is_read": True,
-                    "updated_at": now
-                },
-                "$setOnInsert": {
-                    "delivery_status": {}
-                }
+    now = datetime.utcnow()
+    result = await messages_service.collection.update_many(
+        query,
+        {
+            "$set": {
+                "is_read": True,
+                "updated_at": now
+            },
+            "$setOnInsert": {
+                "delivery_status": {}
             }
-        )
-        
-        # Update delivery_status for all updated messages
-        if result.modified_count > 0:
-            for msg in messages_to_update:
-                delivery_status = msg.get("delivery_status", {})
-                if current_user.id not in delivery_status:
-                    delivery_status[current_user.id] = {}
-                delivery_status[current_user.id]["delivered"] = True
-                delivery_status[current_user.id]["read"] = True
-                delivery_status[current_user.id]["read_at"] = now
-                delivery_status[current_user.id]["read_by"] = current_user.id
-                
-                await messages_service.collection.update_one(
-                    {"_id": msg["_id"]},
-                    {"$set": {"delivery_status": delivery_status}}
-                )
+        }
+    )
+    
+    # Update delivery_status for all updated messages
+    if result.modified_count > 0:
+        # Get all updated messages to update their delivery_status
+        updated_messages = []
+        async for msg in messages_service.collection.find(query):
+            delivery_status = msg.get("delivery_status", {})
+            if current_user.id not in delivery_status:
+                delivery_status[current_user.id] = {}
+            delivery_status[current_user.id]["delivered"] = True
+            delivery_status[current_user.id]["read"] = True
+            delivery_status[current_user.id]["read_at"] = now
+            delivery_status[current_user.id]["read_by"] = current_user.id
+            
+            await messages_service.collection.update_one(
+                {"_id": msg["_id"]},
+                {"$set": {"delivery_status": delivery_status}}
+            )
     
     # Emit chat list update to both users (for 1-to-1) or all group members
     from src.app.socketio_manager import socketio_manager

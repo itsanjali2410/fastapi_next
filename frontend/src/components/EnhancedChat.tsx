@@ -157,8 +157,6 @@ function MessageBubble({ message, isOwn, onReply, onEdit, onDelete, onReact }: M
   }
 
   // Get delivery status for read receipts
-  // For 1-to-1: check receiver_id in delivery_status
-  // For group: check if any member has read it
   const deliveryStatus = isOwn && message.delivery_status 
     ? (message.receiver_id && message.delivery_status[message.receiver_id]
        ? message.delivery_status[message.receiver_id]
@@ -166,13 +164,8 @@ function MessageBubble({ message, isOwn, onReply, onEdit, onDelete, onReact }: M
          ? Object.values(message.delivery_status).find((status: { read?: boolean; delivered?: boolean }) => status.read)
          : undefined)
     : undefined;
-  const isRead = deliveryStatus && typeof deliveryStatus === 'object' ? (deliveryStatus.read === true) : false;
-  const isDelivered = deliveryStatus && typeof deliveryStatus === 'object' ? (deliveryStatus.delivered === true) : false;
-  
-  // Get read_at timestamp for last seen
-  const readAt = deliveryStatus && typeof deliveryStatus === 'object' && deliveryStatus.read_at 
-    ? deliveryStatus.read_at 
-    : undefined;
+  const isRead = deliveryStatus && typeof deliveryStatus === 'object' ? deliveryStatus.read : false;
+  const isDelivered = deliveryStatus && typeof deliveryStatus === 'object' ? deliveryStatus.delivered : false;
 
   return (
     <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2 group`}>
@@ -221,13 +214,8 @@ function MessageBubble({ message, isOwn, onReply, onEdit, onDelete, onReact }: M
                 {new Date(message.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
               </span>
               {isOwn && (
-                <span className="text-xs" style={{ color: isRead ? '#34B7F1' : (isDelivered ? colors.secondaryText : 'transparent') }}>
-                  {isRead ? '✓✓' : isDelivered ? '✓' : ''}
-                </span>
-              )}
-              {isOwn && readAt && (
-                <span className="text-xs ml-1 italic" style={{ color: colors.secondaryText }}>
-                  (seen {new Date(readAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })})
+                <span className="text-xs" style={{ color: isRead ? colors.primaryBlue : (isDelivered ? colors.secondaryText : 'transparent') }}>
+                  {isRead ? '✓✓' : isDelivered ? '✓' : '○'}
                 </span>
               )}
             </div>
@@ -308,7 +296,7 @@ interface EnhancedChatProps {
 
 export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: EnhancedChatProps) {
   const { user } = useAuth();
-  const { socket, connected, onTyping, offTyping } = useSocket();
+  const { socket, connected } = useSocket();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -318,28 +306,36 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
   const [lastSeen, setLastSeen] = useState<string>();
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const emitTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastTypingEmitRef = useRef<number>(0);
 
   useEffect(() => {
     const fetchMessages = async () => {
       try {
-        const endpoint = isGroup 
-          ? `/messages/group/${chatId}/history`
-          : `/messages/history/${receiverId}`;
-        const response = await apiClient.get<{ messages: Message[] }>(endpoint);
-        setMessages(response.messages || []);
-        
-        // Mark all messages as read when chat is opened
-        if (user?.id) {
-          try {
-            await apiClient.post('/messages/mark-all-read', {
-              receiver_id: isGroup ? undefined : receiverId,
-              group_chat_id: isGroup ? chatId : undefined,
-            });
-          } catch (error) {
-            console.error('Failed to mark messages as read:', error);
+        if (isGroup) {
+          // Use group messages endpoint with pagination
+          const response = await apiClient.get<{ messages: Message[]; page: number; limit: number; total: number; has_more: boolean }>(`/chat/groups/${chatId}/messages?page=1`);
+          setMessages(response.messages || []);
+          
+          // Mark all group messages as read when group is opened
+          if (user?.id) {
+            try {
+              await apiClient.post(`/chat/groups/${chatId}/mark-read`);
+            } catch (error) {
+              console.error('Failed to mark group messages as read:', error);
+            }
+          }
+        } else {
+          const response = await apiClient.get<{ messages: Message[] }>(`/messages/history/${receiverId}`);
+          setMessages(response.messages || []);
+          
+          // Mark all messages as read when chat is opened
+          if (user?.id) {
+            try {
+              await apiClient.post('/messages/mark-all-read', {
+                receiver_id: receiverId,
+              });
+            } catch (error) {
+              console.error('Failed to mark messages as read:', error);
+            }
           }
         }
       } catch (error) {
@@ -351,12 +347,6 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
 
     if (chatId) {
       fetchMessages();
-      // Clear typing indicator when chat changes
-      setIsTyping(false);
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = null;
-      }
     }
 
     // Fetch user status for 1-to-1 chats
@@ -379,59 +369,45 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
     }
   }, [chatId, receiverId, isGroup, user?.id]);
 
-  // Scoped typing indicator - listen globally but filter by active chat
+  // Typing indicator
   useEffect(() => {
-    if (!onTyping || !offTyping) return;
+    if (!socket || !connected) return;
 
-    const handleTyping = (event: { sender_id: string; receiver_id: string; group_chat_id?: string; is_group: boolean }) => {
-      // Only show typing if it's for the current active chat
-      if (isGroup) {
-        // For group chats, check if group_chat_id matches
-        if (event.is_group && event.group_chat_id === chatId && event.sender_id !== user?.id) {
-          setIsTyping(true);
-          // Auto-hide after 3 seconds of inactivity
-          if (typingTimeoutRef.current) {
-            clearTimeout(typingTimeoutRef.current);
-          }
-          typingTimeoutRef.current = setTimeout(() => {
-            setIsTyping(false);
-          }, 3000);
-        }
-      } else {
-        // For 1-to-1 chats, check if sender_id is the receiver and receiver_id is current user
-        if (!event.is_group && event.sender_id === receiverId && event.receiver_id === user?.id) {
-          setIsTyping(true);
-          // Auto-hide after 3 seconds of inactivity
-          if (typingTimeoutRef.current) {
-            clearTimeout(typingTimeoutRef.current);
-          }
-          typingTimeoutRef.current = setTimeout(() => {
-            setIsTyping(false);
-          }, 3000);
-        }
-      }
+    let typingTimeout: NodeJS.Timeout;
+    const handleTyping = () => {
+      setIsTyping(true);
+      clearTimeout(typingTimeout);
+      typingTimeout = setTimeout(() => setIsTyping(false), 3000);
     };
 
-    onTyping(handleTyping);
+    socket.on('typing', handleTyping);
 
     return () => {
-      offTyping(handleTyping);
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
+      socket.off('typing', handleTyping);
+      clearTimeout(typingTimeout);
     };
-  }, [onTyping, offTyping, chatId, receiverId, isGroup, user?.id]);
+  }, [socket, connected]);
+
+  // Join group room when group chat is opened
+  useEffect(() => {
+    if (!socket || !connected || !isGroup || !chatId) return;
+
+    // Join the group room
+    socket.emit('join_group', { groupId: chatId });
+
+    return () => {
+      // Optionally leave room on unmount (though socket will handle this on disconnect)
+    };
+  }, [socket, connected, chatId, isGroup]);
 
   // Socket.io real-time updates
   useEffect(() => {
     if (!socket || !connected) return;
 
     const handleNewMessage = (message: Message) => {
-      if (
-        (isGroup && message.group_chat_id === chatId) ||
-        (!isGroup && ((message.sender_id === receiverId && message.receiver_id === user?.id) ||
-                      (message.sender_id === user?.id && message.receiver_id === receiverId)))
-      ) {
+      // Only handle 1-to-1 messages here, group messages are handled separately
+      if (!isGroup && ((message.sender_id === receiverId && message.receiver_id === user?.id) ||
+                      (message.sender_id === user?.id && message.receiver_id === receiverId))) {
         setMessages(prev => {
           // Check if message already exists
           if (prev.some(m => m.id === message.id)) {
@@ -455,9 +431,41 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
           // Mark message as read immediately when received in open chat
           if (user?.id) {
             apiClient.post('/messages/mark-all-read', {
-              receiver_id: isGroup ? undefined : receiverId,
-              group_chat_id: isGroup ? chatId : undefined,
+              receiver_id: receiverId,
             }).catch(() => {
+              // Ignore errors
+            });
+          }
+        }
+      }
+    };
+
+    // Handle group messages separately
+    const handleGroupMessage = (message: Message) => {
+      if (isGroup && message.group_chat_id === chatId) {
+        setMessages(prev => {
+          // Check if message already exists
+          if (prev.some(m => m.id === message.id)) {
+            return prev;
+          }
+          return [...prev, message];
+        });
+        
+        // Play notification sound and mark as read if message is from another user
+        if (message.sender_id !== user?.id) {
+          try {
+            const audio = new Audio('/80921__justinbw__buttonchime02up.wav');
+            audio.volume = 0.5;
+            audio.play().catch(() => {
+              // Ignore audio play errors
+            });
+          } catch {
+            // Ignore audio errors
+          }
+          
+          // Mark group messages as read immediately when received in open chat
+          if (user?.id) {
+            apiClient.post(`/chat/groups/${chatId}/mark-read`).catch(() => {
               // Ignore errors
             });
           }
@@ -477,14 +485,30 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
       ));
     };
 
+    // Handle group typing
+    const handleGroupTyping = (data: { userId: string; groupId: string }) => {
+      if (isGroup && data.groupId === chatId && data.userId !== user?.id) {
+        setIsTyping(true);
+        setTimeout(() => setIsTyping(false), 3000);
+      }
+    };
+
     socket.on('new_message', handleNewMessage);
+    socket.on('group_message', handleGroupMessage);
     socket.on('message_updated', handleMessageUpdate);
     socket.on('message_deleted', handleMessageDelete);
+    if (isGroup) {
+      socket.on('group_typing', handleGroupTyping);
+    }
 
     return () => {
       socket.off('new_message', handleNewMessage);
+      socket.off('group_message', handleGroupMessage);
       socket.off('message_updated', handleMessageUpdate);
       socket.off('message_deleted', handleMessageDelete);
+      if (isGroup) {
+        socket.off('group_typing', handleGroupTyping);
+      }
     };
   }, [socket, connected, chatId, receiverId, isGroup, user?.id]);
 
@@ -494,40 +518,44 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || sending) return;
+    if (!newMessage.trim() || sending || !user?.id) return;
 
     setSending(true);
     try {
-      const payload: {
-        content: string;
-        reply_to?: string;
-        group_chat_id?: string;
-        receiver_id?: string;
-      } = {
-        content: newMessage.trim(),
-      };
-
-      if (replyingTo) {
-        payload.reply_to = replyingTo.id;
-      }
-
-      if (isGroup) {
-        payload.group_chat_id = chatId;
+      if (isGroup && socket && connected) {
+        // Use socket for group messages
+        socket.emit('group_message', {
+          groupId: chatId,
+          senderId: user.id,
+          content: newMessage.trim(),
+        });
+        setNewMessage('');
+        setReplyingTo(null);
       } else {
-        payload.receiver_id = receiverId;
-      }
+        // Use API for 1-to-1 messages
+        const payload: {
+          content: string;
+          reply_to?: string;
+          group_chat_id?: string;
+          receiver_id?: string;
+        } = {
+          content: newMessage.trim(),
+        };
 
-      await apiClient.post('/messages/send', payload);
-      setNewMessage('');
-      setReplyingTo(null);
-      
-      // Clear typing indicator and any pending typing emits
-      setIsTyping(false);
-      if (emitTypingTimeoutRef.current) {
-        clearTimeout(emitTypingTimeoutRef.current);
-        emitTypingTimeoutRef.current = null;
+        if (replyingTo) {
+          payload.reply_to = replyingTo.id;
+        }
+
+        if (isGroup) {
+          payload.group_chat_id = chatId;
+        } else {
+          payload.receiver_id = receiverId;
+        }
+
+        await apiClient.post('/messages/send', payload);
+        setNewMessage('');
+        setReplyingTo(null);
       }
-      lastTypingEmitRef.current = 0;
     } catch (error) {
       console.error('Failed to send message:', error);
     } finally {
@@ -541,18 +569,11 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
 
   const handleEdit = async (message: Message) => {
     const newContent = prompt('Edit message:', message.content);
-    if (newContent && newContent !== message.content && newContent.trim()) {
+    if (newContent && newContent !== message.content) {
       try {
-        await apiClient.put(`/messages/${message.id}`, { content: newContent.trim() });
-        // Update local state immediately for better UX
-        setMessages(prev => prev.map(msg => 
-          msg.id === message.id 
-            ? { ...msg, content: newContent.trim(), edited: true, edited_at: new Date().toISOString() }
-            : msg
-        ));
+        await apiClient.put(`/messages/${message.id}`, { content: newContent });
       } catch (error) {
         console.error('Failed to edit message:', error);
-        alert('Failed to edit message. Please try again.');
       }
     }
   };
@@ -606,9 +627,6 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
         {isTyping && (
           <div className="flex justify-start mb-2">
             <div className="px-4 py-2 rounded-lg bg-white" style={{ border: `1px solid ${colors.borderGray}` }}>
-              <p className="text-xs italic mb-1" style={{ color: colors.secondaryText }}>
-                {isGroup ? 'Someone is typing...' : `${chatName} is typing...`}
-              </p>
               <div className="flex space-x-1">
                 <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0ms' }}></div>
                 <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '150ms' }}></div>
@@ -667,45 +685,18 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
             value={newMessage}
             onChange={(e) => {
               setNewMessage(e.target.value);
-              
-              // Emit typing indicator with debouncing (only emit every 1 second)
+              // Emit typing indicator
               if (socket && connected && e.target.value.length > 0) {
-                const now = Date.now();
-                if (now - lastTypingEmitRef.current > 1000) {
-                  // Clear any pending emit
-                  if (emitTypingTimeoutRef.current) {
-                    clearTimeout(emitTypingTimeoutRef.current);
-                  }
-                  
-                  // Emit typing event with sender_id and receiver_id
-                  socket.emit('typing', {
-                    chat_id: isGroup ? chatId : receiverId,
-                    receiver_id: isGroup ? undefined : receiverId,
-                    is_group: isGroup
+                if (isGroup) {
+                  socket.emit('group_typing', {
+                    groupId: chatId,
+                    userId: user?.id
                   });
-                  
-                  lastTypingEmitRef.current = now;
                 } else {
-                  // Debounce: schedule emit if not already scheduled
-                  if (!emitTypingTimeoutRef.current) {
-                    emitTypingTimeoutRef.current = setTimeout(() => {
-                      if (socket && connected && newMessage.length > 0) {
-                        socket.emit('typing', {
-                          chat_id: isGroup ? chatId : receiverId,
-                          receiver_id: isGroup ? undefined : receiverId,
-                          is_group: isGroup
-                        });
-                        lastTypingEmitRef.current = Date.now();
-                      }
-                      emitTypingTimeoutRef.current = null;
-                    }, 1000 - (now - lastTypingEmitRef.current));
-                  }
-                }
-              } else {
-                // Clear typing indicator when input is empty
-                if (emitTypingTimeoutRef.current) {
-                  clearTimeout(emitTypingTimeoutRef.current);
-                  emitTypingTimeoutRef.current = null;
+                  socket.emit('typing', {
+                    chat_id: receiverId,
+                    is_group: false
+                  });
                 }
               }
             }}
