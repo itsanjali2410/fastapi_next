@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from src.app.models.message import SendMessageRequest
 from src.app.core.config import settings
+import os
 # Imports the router aggregator we defined earlier
 from src.app.routes.auth import router as auth_router
 from src.app.routes.org_routes import router as org_router
@@ -12,6 +14,7 @@ from src.app.routes.invite_routes import router as invite_router
 from src.app.routes.messages_routes import router as messages_router
 from src.app.routes.group_chat_routes import router as group_chat_router
 from src.app.routes.user_status_routes import router as user_status_router
+from src.app.routes.upload_routes import router as upload_router
 # Imports MongoDB connection handlers
 from src.app.db.mongo import connect_to_mongo, close_mongo_connection
 # Import Socket.io manager
@@ -56,6 +59,11 @@ app.include_router(task_router, prefix=f"{API_V1_STR}/tasks", tags=["tasks"])
 app.include_router(invite_router, prefix=f"{API_V1_STR}/invites", tags=["invites"])
 app.include_router(messages_router, prefix=f"{API_V1_STR}/messages", tags=["messages"])
 app.include_router(user_status_router, prefix=f"{API_V1_STR}/users/status", tags=["user-status"])
+app.include_router(upload_router, prefix=f"{API_V1_STR}/upload", tags=["upload"])
+
+# Serve uploaded files statically
+if os.path.exists("uploads"):
+    app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 @app.post("/test/send")
 async def test_send(request: SendMessageRequest):
     message = {

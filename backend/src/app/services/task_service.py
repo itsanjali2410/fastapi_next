@@ -47,10 +47,16 @@ class TaskService:
             pass
         return None
 
-    async def get_tasks_by_org(self, org_id: str, skip: int = 0, limit: int = 50) -> List[TaskInDB]:
-        """Get all tasks in an organization"""
+    async def get_tasks_by_org(self, org_id: str, skip: int = 0, limit: int = 50, status: Optional[str] = None, assigned_to: Optional[str] = None) -> List[TaskInDB]:
+        """Get all tasks in an organization with optional filters"""
+        query = {"org_id": org_id}
+        if status:
+            query["status"] = status
+        if assigned_to:
+            query["assigned_to"] = assigned_to
+        
         tasks = []
-        cursor = self.collection.find({"org_id": org_id}).skip(skip).limit(limit).sort("created_at", -1)
+        cursor = self.collection.find(query).skip(skip).limit(limit).sort("created_at", -1)
         async for task_data in cursor:
             task_data = self._convert_to_dict(task_data)
             tasks.append(TaskInDB(**task_data))
@@ -67,6 +73,39 @@ class TaskService:
             task_data = self._convert_to_dict(task_data)
             tasks.append(TaskInDB(**task_data))
         return tasks
+    
+    async def add_comment(self, task_id: str, comment_data: dict) -> dict:
+        """Add a comment to a task"""
+        from bson import ObjectId
+        comment_data["created_at"] = datetime.utcnow()
+        result = await self.collection.update_one(
+            {"_id": ObjectId(task_id)},
+            {"$push": {"comments": comment_data}, "$set": {"updated_at": datetime.utcnow()}}
+        )
+        if result.modified_count > 0:
+            comment_data["comment_id"] = str(ObjectId())  # Generate ID for comment
+            return comment_data
+        return None
+    
+    async def add_attachment(self, task_id: str, attachment_data: dict) -> bool:
+        """Add an attachment to a task"""
+        from bson import ObjectId
+        result = await self.collection.update_one(
+            {"_id": ObjectId(task_id)},
+            {"$push": {"attachments": attachment_data}, "$set": {"updated_at": datetime.utcnow()}}
+        )
+        return result.modified_count > 0
+    
+    async def log_activity(self, task_id: str, activity_data: dict):
+        """Log task activity (optional)"""
+        from bson import ObjectId
+        activity_data["created_at"] = datetime.utcnow()
+        # Store in task_activities collection (or embed in task)
+        activities_collection = self.db.task_activities
+        await activities_collection.insert_one({
+            "task_id": task_id,
+            **activity_data
+        })
 
     async def update_task(self, task_id: str, update_data: dict) -> Optional[TaskInDB]:
         """Update task"""

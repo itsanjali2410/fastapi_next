@@ -3,15 +3,33 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { apiClient } from '@/lib/api';
+import { useTaskSocket } from '@/hooks/useTaskSocket';
+import { useSocket } from '@/contexts/SocketContext';
 
 interface Task {
   id: string;
   title: string;
-  description: string;
+  description?: string;
   status: string;
-  assigned_to?: string;
-  assigned_to_name?: string;
+  priority: string;
+  created_by: string;
+  created_by_name?: string;
+  assigned_to: string[];
+  assigned_to_names?: string[];
+  watchers: string[];
+  watchers_names?: string[];
+  attachments: Array<{ url: string; name: string; mime: string }>;
+  comments: Array<{
+    comment_id: string;
+    task_id: string;
+    content: string;
+    created_by: string;
+    created_by_name?: string;
+    created_at: string;
+  }>;
+  org_id: string;
   created_at: string;
+  updated_at: string;
   due_date?: string;
 }
 
@@ -19,6 +37,7 @@ export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all');
+  const { socket, connected } = useSocket();
 
   useEffect(() => {
     const fetchTasks = async () => {
@@ -34,6 +53,36 @@ export default function TasksPage() {
 
     fetchTasks();
   }, []);
+
+  // Real-time task updates
+  useTaskSocket(
+    (task) => {
+      // Task created - add to list
+      setTasks(prev => [task, ...prev]);
+    },
+    (task) => {
+      // Task updated - update in list
+      setTasks(prev => prev.map(t => t.id === task.id ? task : t));
+    },
+    (data) => {
+      // Status changed - update in list
+      setTasks(prev => prev.map(t => t.id === data.task_id ? data.task : t));
+    },
+    undefined, // Comments handled in detail page
+    (data) => {
+      // Task deleted - remove from list
+      setTasks(prev => prev.filter(t => t.id !== data.task_id));
+    },
+    (notification) => {
+      // Show notification
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification(notification.task_title, {
+          body: notification.message,
+          icon: '/favicon.ico',
+        });
+      }
+    }
+  );
 
   const filteredTasks = tasks.filter((task) => {
     if (filter === 'all') return true;
@@ -96,8 +145,17 @@ export default function TasksPage() {
                     <h3 className="text-lg font-semibold text-gray-900">{task.title}</h3>
                     <p className="text-sm text-gray-600 mt-1 line-clamp-2">{task.description}</p>
                     <div className="flex items-center space-x-4 mt-3 text-sm text-gray-500">
-                      {task.assigned_to_name && (
-                        <span>Assigned to: {task.assigned_to_name}</span>
+                      {task.assigned_to_names && task.assigned_to_names.length > 0 && (
+                        <span>Assigned to: {task.assigned_to_names.join(', ')}</span>
+                      )}
+                      {task.priority && (
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          task.priority === 'high' ? 'bg-red-100 text-red-800' :
+                          task.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {task.priority}
+                        </span>
                       )}
                       {task.due_date && (
                         <span>Due: {new Date(task.due_date).toLocaleDateString()}</span>

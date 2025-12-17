@@ -8,6 +8,11 @@ import { apiClient } from '@/lib/api';
 import { colors } from '@/lib/colors';
 import { useSocket } from '@/contexts/SocketContext';
 
+interface ChatSidebarProps {
+  isMobile?: boolean;
+  onOpenSidebar?: () => void;
+}
+
 interface Chat {
   id: string;
   type?: "personal" | "group";
@@ -34,7 +39,7 @@ interface UserStatus {
   user_name?: string;
 }
 
-export function ChatSidebar() {
+export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProps) {
   const pathname = usePathname();
   const { user } = useAuth();
   const { socket, connected } = useSocket();
@@ -239,6 +244,14 @@ export function ChatSidebar() {
       refreshChatList();
     };
 
+    const handleGroupMessage = (message: NewMessageEvent) => {
+      // Treat group messages the same for sounds/unread refresh
+      if (message.sender_id !== user?.id) {
+        playNotification();
+      }
+      refreshChatList();
+    };
+
     const handleChatListUpdate = () => {
       refreshChatList();
     };
@@ -258,13 +271,15 @@ export function ChatSidebar() {
 
     socket.on('user_status_update', handleUserStatusUpdate);
     socket.on('new_message', handleNewMessage);
+    socket.on('group_message', handleGroupMessage);
     socket.on('chat_list_update', handleChatListUpdate);
     socket.on('group_unread_update', handleGroupUnreadUpdate);
 
     return () => {
       socket.off('user_status_update', handleUserStatusUpdate);
       socket.off('new_message', handleNewMessage);
-      socket.off('chat_list_update', refreshChatList);
+      socket.off('group_message', handleGroupMessage);
+      socket.off('chat_list_update', handleChatListUpdate);
       socket.off('group_unread_update', handleGroupUnreadUpdate);
     };
   }, [socket, connected, user]);
@@ -319,11 +334,25 @@ export function ChatSidebar() {
   }
 
   return (
-    <div className="w-80 bg-white border-r flex flex-col" style={{ borderColor: colors.borderGray, height: '100vh' }}>
+    <div
+      className={`${isMobile ? 'w-full' : 'w-80'} bg-white border-r flex flex-col`}
+      style={{ borderColor: colors.borderGray, height: '100dvh' }}
+    >
       {/* Header */}
       <div className="p-4 border-b" style={{ borderColor: colors.borderGray }}>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold" style={{ color: colors.primaryText }}>Chats</h2>
+          <div className="flex items-center space-x-2">
+            {isMobile && (
+              <button
+                onClick={onOpenSidebar}
+                className="p-2 rounded-lg hover:bg-gray-100 transition"
+                aria-label="Open navigation"
+              >
+                ☰
+              </button>
+            )}
+            <h2 className="text-lg font-semibold" style={{ color: colors.primaryText }}>Chats</h2>
+          </div>
           <Link
             href="/chat/create-group"
             className="p-2 rounded-lg hover:bg-gray-100 transition"

@@ -53,3 +53,4 @@ class MessageHistoryEnhancedResponse(BaseModel):
     total: int
     has_more: bool = False
 
+

@@ -14,7 +14,9 @@ export default function CreateTaskPage() {
   const router = useRouter();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [assignedTo, setAssignedTo] = useState('');
+  const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
+  const [assignedTo, setAssignedTo] = useState<string[]>([]);
+  const [watchers, setWatchers] = useState<string[]>([]);
   const [dueDate, setDueDate] = useState('');
   const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState('');
@@ -42,7 +44,9 @@ export default function CreateTaskPage() {
       await apiClient.post('/tasks', {
         title,
         description,
-        assigned_to: assignedTo || undefined,
+        priority,
+        assigned_to: assignedTo,
+        watchers: watchers,
         due_date: dueDate || undefined,
       });
       router.push('/tasks');
@@ -97,22 +101,67 @@ export default function CreateTaskPage() {
             </div>
 
             <div>
+              <label htmlFor="priority" className="block text-sm font-medium text-gray-700 mb-2">
+                Priority
+              </label>
+              <select
+                id="priority"
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as 'low' | 'medium' | 'high')}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+
+            <div>
               <label htmlFor="assignedTo" className="block text-sm font-medium text-gray-700 mb-2">
-                Assign To (Optional)
+                Assign To (Multiple selection)
               </label>
               <select
                 id="assignedTo"
+                multiple
                 value={assignedTo}
-                onChange={(e) => setAssignedTo(e.target.value)}
+                onChange={(e) => {
+                  const selected = Array.from(e.target.selectedOptions, option => option.value);
+                  setAssignedTo(selected);
+                }}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+                size={5}
               >
-                <option value="">Unassigned</option>
                 {users.map((user) => (
                   <option key={user.id} value={user.id}>
                     {user.name}
                   </option>
                 ))}
               </select>
+              <p className="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
+            </div>
+
+            <div>
+              <label htmlFor="watchers" className="block text-sm font-medium text-gray-700 mb-2">
+                Watchers (Optional)
+              </label>
+              <select
+                id="watchers"
+                multiple
+                value={watchers}
+                onChange={(e) => {
+                  const selected = Array.from(e.target.selectedOptions, option => option.value);
+                  setWatchers(selected);
+                }}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+                size={5}
+              >
+                {users.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
             </div>
 
             <div>

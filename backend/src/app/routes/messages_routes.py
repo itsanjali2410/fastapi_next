@@ -187,42 +187,80 @@ async def get_message_history(
                 detail="Invalid timestamp format. Use ISO format."
             )
     
-    # Get messages (service fetches limit + 1 to determine if more exist)
-    messages = await messages_service.get_message_history(
-        user1_id=current_user.id,
-        user2_id=other_user_id,
-        limit=limit,
-        before_timestamp=before_timestamp
-    )
+    # Get messages with replyTo lookup using aggregation
+    from bson import ObjectId
+    messages_collection = messages_service.collection
     
-    # Determine if more messages exist by checking if we got more than limit
-    has_more = len(messages) > limit
+    # Build query
+    query = {
+        "organization_id": current_user.org_id,
+        "$or": [
+            {"sender_id": current_user.id, "receiver_id": other_user_id},
+            {"sender_id": other_user_id, "receiver_id": current_user.id}
+        ]
+    }
     
-    # Return only the requested limit (remove the extra message if present)
-    messages_to_return = messages[:limit]
+    if before_timestamp:
+        query["created_at"] = {"$lt": before_timestamp}
     
-    # Batch fetch user data - only 2 users in a conversation, fetch once
-    # Create a cache to avoid duplicate queries
+    # Use aggregation pipeline to include replyTo lookup
+    pipeline = [
+        {"$match": query},
+        {"$sort": {"created_at": 1}},
+        {"$limit": limit + 1},  # Fetch one extra to check if more exist
+        {
+            "$lookup": {
+                "from": "messages",
+                "localField": "reply_to",
+                "foreignField": "_id",
+                "as": "quoted_message"
+            }
+        },
+        {
+            "$addFields": {
+                "quoted_message": {
+                    "$arrayElemAt": ["$quoted_message", 0]
+                }
+            }
+        }
+    ]
+    
+    messages_data = []
+    async for msg_data in messages_collection.aggregate(pipeline):
+        # Convert ObjectId to string
+        if isinstance(msg_data.get("_id"), ObjectId):
+            msg_data["_id"] = str(msg_data["_id"])
+        
+        # Convert quoted message _id if exists
+        if msg_data.get("quoted_message") and isinstance(msg_data["quoted_message"].get("_id"), ObjectId):
+            msg_data["quoted_message"]["_id"] = str(msg_data["quoted_message"]["_id"])
+        
+        messages_data.append(msg_data)
+    
+    # Determine if more messages exist
+    has_more = len(messages_data) > limit
+    messages_to_return = messages_data[:limit]
+    
+    # Build message responses
     user_cache = {
         current_user.id: current_user.name,
         other_user_id: other_user.name
     }
     
-    # Build message responses using cached user data
     message_responses = []
-    for msg in messages_to_return:
-        # Use cached user names (only 2 users in conversation)
-        sender_name = user_cache.get(msg.sender_id, "Unknown")
-        receiver_name = user_cache.get(msg.receiver_id, "Unknown")
+    for msg_data in messages_to_return:
+        sender_id = msg_data.get("sender_id")
+        sender_name = user_cache.get(sender_id, "Unknown")
+        receiver_name = user_cache.get(msg_data.get("receiver_id"), "Unknown")
         
         message_responses.append(MessageResponse(
-            id=msg.id,
-            organization_id=msg.organization_id,
-            sender_id=msg.sender_id,
-            receiver_id=msg.receiver_id,
-            content=msg.content,
-            created_at=msg.created_at,
-            is_read=msg.is_read,
+            id=msg_data["_id"],
+            organization_id=msg_data.get("organization_id"),
+            sender_id=sender_id,
+            receiver_id=msg_data.get("receiver_id"),
+            content=msg_data.get("content", ""),
+            created_at=msg_data.get("created_at"),
+            is_read=msg_data.get("is_read", False),
             sender_name=sender_name,
             receiver_name=receiver_name
         ))

@@ -26,3 +26,4 @@ class ConversationParticipant(BaseModel):
     other_user_id: Optional[str] = None  # For DMs: the other user's ID
     group_id: Optional[str] = None  # For groups: the group chat ID
 
+

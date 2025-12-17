@@ -49,3 +49,4 @@ class GroupChatListItem(BaseModel):
 class GroupChatListResponse(BaseModel):
     groups: List[GroupChatListItem]
 
+

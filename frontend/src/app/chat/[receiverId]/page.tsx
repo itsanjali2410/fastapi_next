@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api';
 import { EnhancedChat } from '@/components/EnhancedChat';
 
@@ -10,6 +10,7 @@ export default function ChatPage() {
   const receiverId = params.receiverId as string;
   const [chatName, setChatName] = useState('User');
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -38,6 +39,13 @@ export default function ChatPage() {
     return null;
   }
 
-  return <EnhancedChat chatId={receiverId} chatName={chatName} receiverId={receiverId} />;
+  return (
+    <EnhancedChat
+      chatId={receiverId}
+      chatName={chatName}
+      receiverId={receiverId}
+      onBackToList={() => router.push('/chat')}
+    />
+  );
 }
 

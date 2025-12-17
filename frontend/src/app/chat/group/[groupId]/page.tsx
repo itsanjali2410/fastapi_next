@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api';
 import { EnhancedChat } from '@/components/EnhancedChat';
 
@@ -10,6 +10,7 @@ export default function GroupChatPage() {
   const groupId = params.groupId as string;
   const [groupName, setGroupName] = useState('Group');
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
   useEffect(() => {
     const fetchGroup = async () => {
@@ -39,6 +40,13 @@ export default function GroupChatPage() {
     return null;
   }
 
-  return <EnhancedChat chatId={groupId} chatName={groupName} isGroup={true} />;
+  return (
+    <EnhancedChat
+      chatId={groupId}
+      chatName={groupName}
+      isGroup={true}
+      onBackToList={() => router.push('/chat')}
+    />
+  );
 }
 

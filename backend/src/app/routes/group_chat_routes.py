@@ -320,23 +320,40 @@ async def get_group_messages(
     # Calculate skip
     skip = (page - 1) * limit
     
-    # Get messages
+    # Get messages with replyTo lookup using aggregation
     messages_collection = db.messages
-    messages = []
-    cursor = (
-        messages_collection
-        .find({"group_chat_id": group_id})
-        .sort("created_at", -1)
-        .skip(skip)
-        .limit(limit)
-    )
+    pipeline = [
+        {"$match": {"group_chat_id": group_id}},
+        {"$sort": {"created_at": -1}},
+        {"$skip": skip},
+        {"$limit": limit},
+        {
+            "$lookup": {
+                "from": "messages",
+                "localField": "reply_to",
+                "foreignField": "_id",
+                "as": "quoted_message"
+            }
+        },
+        {
+            "$addFields": {
+                "quoted_message": {
+                    "$arrayElemAt": ["$quoted_message", 0]
+                }
+            }
+        }
+    ]
     
-    # Get user names for sender
+    messages = []
     user_service = UserService(db)
-    async for msg_data in cursor:
+    async for msg_data in messages_collection.aggregate(pipeline):
         # Convert ObjectId to string
         if isinstance(msg_data.get("_id"), ObjectId):
             msg_data["_id"] = str(msg_data["_id"])
+        
+        # Convert quoted message _id if exists
+        if msg_data.get("quoted_message") and isinstance(msg_data["quoted_message"].get("_id"), ObjectId):
+            msg_data["quoted_message"]["_id"] = str(msg_data["quoted_message"]["_id"])
         
         # Get sender name
         sender_id = msg_data.get("sender_id")

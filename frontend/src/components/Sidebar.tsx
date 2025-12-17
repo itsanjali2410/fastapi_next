@@ -1,9 +1,17 @@
 'use client';
 
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { colors } from '@/lib/colors';
+import { apiClient } from '@/lib/api';
+import { useTaskSocket } from '@/hooks/useTaskSocket';
+import { useSocket } from '@/contexts/SocketContext';
+
+interface TaskSummary {
+  id: string;
+  status: string;
+}
 
 interface SidebarProps {
   collapsed?: boolean;
@@ -13,6 +21,87 @@ interface SidebarProps {
 export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const { socket, connected } = useSocket();
+  const [pendingCount, setPendingCount] = useState<number>(0);
+  const [unreadChats, setUnreadChats] = useState<number>(0);
+
+  const fetchPendingCount = useCallback(async () => {
+    try {
+      const data = await apiClient.get<TaskSummary[]>('/tasks?status=pending&limit=100');
+      setPendingCount(data.length);
+    } catch (error) {
+      console.error('Failed to fetch pending tasks count', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    const id = setTimeout(() => {
+      fetchPendingCount();
+    }, 0);
+    return () => clearTimeout(id);
+  }, [fetchPendingCount]);
+
+  const fetchUnreadChats = useCallback(async () => {
+    try {
+      const data = await apiClient.get<Array<{ unread_count?: number }>>('/chat/list');
+      const totalUnread = data.reduce((sum, chat) => sum + (chat.unread_count || 0), 0);
+      setUnreadChats(totalUnread);
+    } catch (error) {
+      console.error('Failed to fetch unread chats count', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    const id = setTimeout(() => {
+      fetchUnreadChats();
+    }, 0);
+    return () => clearTimeout(id);
+  }, [fetchUnreadChats]);
+
+  useEffect(() => {
+    if (!socket || !connected) return;
+
+    const handleNewMessage = (message: { sender_id: string; receiver_id?: string; group_chat_id?: string }) => {
+      // Assume any incoming message increments unread until list refresh logic handles it
+      if (message.sender_id !== user?.id) {
+        setUnreadChats((prev) => prev + 1);
+      }
+    };
+
+    const handleChatListUpdate = () => {
+      fetchUnreadChats();
+    };
+
+    socket.on('new_message', handleNewMessage);
+    socket.on('chat_list_update', handleChatListUpdate);
+
+    return () => {
+      socket.off('new_message', handleNewMessage);
+      socket.off('chat_list_update', handleChatListUpdate);
+    };
+  }, [socket, connected, user?.id, fetchUnreadChats]);
+
+  useTaskSocket(
+    (task) => {
+      if (task.status === 'pending') {
+        setPendingCount((prev) => prev + 1);
+      }
+    },
+    undefined,
+    ({ status, old_status }) => {
+      if (old_status === 'pending' && status !== 'pending') {
+        setPendingCount((prev) => Math.max(0, prev - 1));
+      } else if (old_status !== 'pending' && status === 'pending') {
+        setPendingCount((prev) => prev + 1);
+      }
+    },
+    undefined,
+    () => {
+      // Deleted task might have been pending; refresh to stay accurate
+      fetchPendingCount();
+    },
+    undefined
+  );
 
   const isActive = (path: string) => pathname === path || pathname.startsWith(path);
 
@@ -66,7 +155,25 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             title={collapsed ? item.label : undefined}
           >
             <span className="text-lg">{item.icon}</span>
-            {!collapsed && <span>{item.label}</span>}
+            {!collapsed && <span className="flex-1">{item.label}</span>}
+            {item.href === '/chat' && unreadChats > 0 && (
+              <span
+                className={`${
+                  collapsed ? 'absolute right-3 top-1/2 -translate-y-1/2' : 'ml-auto'
+                } inline-flex items-center justify-center rounded-full bg-red-500 text-white text-xs min-w-[24px] px-2 py-0.5`}
+              >
+                {unreadChats > 99 ? '99+' : unreadChats}
+              </span>
+            )}
+            {item.href === '/tasks' && pendingCount > 0 && (
+              <span
+                className={`${
+                  collapsed ? 'absolute right-3 top-1/2 -translate-y-1/2' : 'ml-auto'
+                } inline-flex items-center justify-center rounded-full bg-red-500 text-white text-xs min-w-[24px] px-2 py-0.5`}
+              >
+                {pendingCount > 99 ? '99+' : pendingCount}
+              </span>
+            )}
             {collapsed && (
               <div className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-sm rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50">
                 {item.label}

@@ -56,6 +56,16 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     return permission === 'granted';
   }, []);
 
+  const playChime = useCallback(() => {
+    try {
+      const audio = new Audio('/80921__justinbw__buttonchime02up.wav');
+      audio.volume = 0.5;
+      audio.play().catch(() => {});
+    } catch {
+      // ignore
+    }
+  }, []);
+
   // Show desktop notification
   const showNotification = useCallback((title: string, options?: NotificationOptions) => {
     if (!('Notification' in window)) {
@@ -170,6 +180,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         const senderName = message.sender_name || 'Someone';
         const title = isGroup ? `${senderName} (Group)` : senderName;
         const body = message.content || 'New message';
+        playChime();
         
         // Show desktop notification (will check permission internally)
         showNotification(title, {
@@ -190,6 +201,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         const senderName = message.sender_name || 'Someone';
         const title = `${senderName} (Group)`;
         const body = message.content || 'New message';
+        playChime();
         
         // Show desktop notification
         showNotification(title, {

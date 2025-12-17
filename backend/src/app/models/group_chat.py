@@ -22,3 +22,4 @@ class GroupChatInDB(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     is_active: bool = True
 
+

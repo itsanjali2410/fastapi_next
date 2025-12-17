@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/contexts/SocketContext';
@@ -8,12 +10,18 @@ import { colors } from '@/lib/colors';
 
 interface Message {
   id: string;
+  chat_type?: 'personal' | 'group';
   sender_id: string;
   receiver_id?: string;
+  group_id?: string;
   group_chat_id?: string;
   content: string;
+  type?: 'text' | 'image' | 'video' | 'audio' | 'document';
+  attachment_url?: string;
+  attachment_name?: string;
+  mime_type?: string;
   reply_to?: string;
-  reply_to_content?: string;
+  quoted_message?: Message; // Populated reply message
   edited: boolean;
   edited_at?: string;
   deleted: boolean;
@@ -28,9 +36,13 @@ interface ChatHeaderProps {
   isOnline?: boolean;
   lastSeen?: string;
   isGroup?: boolean;
+  showBack?: boolean;
+  onBack?: () => void;
+  onSearch?: () => void;
+  onInfo?: () => void;
 }
 
-function ChatHeader({ name, isOnline, lastSeen, isGroup }: ChatHeaderProps) {
+function ChatHeader({ name, isOnline, lastSeen, isGroup, showBack, onBack, onSearch, onInfo }: ChatHeaderProps) {
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -47,6 +59,15 @@ function ChatHeader({ name, isOnline, lastSeen, isGroup }: ChatHeaderProps) {
   return (
     <div className="bg-white p-4 flex items-center justify-between border-b relative" style={{ borderColor: colors.borderGray }}>
       <div className="flex items-center space-x-3">
+        {showBack && (
+          <button
+            onClick={onBack}
+            className="mr-2 p-2 rounded-lg hover:bg-gray-100 transition"
+            aria-label="Back"
+          >
+            ←
+          </button>
+        )}
         <div className="relative">
           <div
             className="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold"
@@ -86,35 +107,23 @@ function ChatHeader({ name, isOnline, lastSeen, isGroup }: ChatHeaderProps) {
             <button
               onClick={() => {
                 setShowMenu(false);
-                // View profile action
+                onInfo?.();
               }}
               className="w-full text-left px-4 py-2 hover:bg-gray-50 text-sm"
               style={{ color: colors.primaryText }}
             >
-              View Profile
+              {isGroup ? 'Group Info' : 'View Profile'}
             </button>
             <button
               onClick={() => {
                 setShowMenu(false);
-                // Search in chat action
+                onSearch?.();
               }}
               className="w-full text-left px-4 py-2 hover:bg-gray-50 text-sm"
               style={{ color: colors.primaryText }}
             >
               Search in Chat
             </button>
-            {isGroup && (
-              <button
-                onClick={() => {
-                  setShowMenu(false);
-                  // Group info action
-                }}
-                className="w-full text-left px-4 py-2 hover:bg-gray-50 text-sm"
-                style={{ color: colors.primaryText }}
-              >
-                Group Info
-              </button>
-            )}
           </div>
         )}
       </div>
@@ -129,9 +138,13 @@ interface MessageBubbleProps {
   onEdit: (message: Message) => void;
   onDelete: (messageId: string) => void;
   onReact: (messageId: string, emoji: string) => void;
+  quotedMessage?: Message | null;
 }
 
-function MessageBubble({ message, isOwn, onReply, onEdit, onDelete, onReact }: MessageBubbleProps) {
+const MessageBubble = React.forwardRef<HTMLDivElement, MessageBubbleProps>(function MessageBubble(
+  { message, isOwn, onReply, onEdit, onDelete, onReact, quotedMessage },
+  ref
+) {
   const [showMenu, setShowMenu] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -168,12 +181,17 @@ function MessageBubble({ message, isOwn, onReply, onEdit, onDelete, onReact }: M
   const isDelivered = deliveryStatus && typeof deliveryStatus === 'object' ? deliveryStatus.delivered : false;
 
   return (
-    <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2 group`}>
+    <div ref={ref} className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2 group`}>
       <div className="relative max-w-xs lg:max-w-md">
-        {message.reply_to && message.reply_to_content && (
+        {/* Quoted message (reply) */}
+        {(message.reply_to && (quotedMessage || message.quoted_message)) && (
           <div className="mb-1 px-3 py-1 rounded border-l-4 text-sm" style={{ borderColor: colors.primaryBlue, backgroundColor: colors.lightBg }}>
-            <p className="font-medium text-xs" style={{ color: colors.primaryBlue }}>Replying to:</p>
-            <p className="truncate" style={{ color: colors.secondaryText }}>{message.reply_to_content}</p>
+            <p className="font-medium text-xs" style={{ color: colors.primaryBlue }}>
+              {(quotedMessage || message.quoted_message)?.sender_name || 'Someone'}
+            </p>
+            <p className="truncate" style={{ color: colors.secondaryText }}>
+              {(quotedMessage || message.quoted_message)?.content || '[Message]'}
+            </p>
           </div>
         )}
         <div
@@ -189,7 +207,52 @@ function MessageBubble({ message, isOwn, onReply, onEdit, onDelete, onReact }: M
               {message.sender_name}
             </p>
           )}
-          <p>{message.content}</p>
+          
+          {/* Attachment preview */}
+          {message.attachment_url && (
+            <div className="mb-2">
+              {message.type === 'image' && (
+                <div className="relative w-full max-w-xs">
+                  <Image
+                    src={message.attachment_url}
+                    alt={message.attachment_name || 'Image'}
+                    className="rounded-lg cursor-pointer h-auto w-full"
+                    width={400}
+                    height={400}
+                    onClick={() => window.open(message.attachment_url, '_blank')}
+                  />
+                </div>
+              )}
+              {message.type === 'video' && (
+                <video 
+                  src={message.attachment_url} 
+                  controls 
+                  className="max-w-full rounded-lg"
+                />
+              )}
+              {message.type === 'audio' && (
+                <audio 
+                  src={message.attachment_url} 
+                  controls 
+                  className="w-full"
+                />
+              )}
+              {(message.type === 'document' || !message.type || message.type === 'text') && message.attachment_url && (
+                <a 
+                  href={message.attachment_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-center space-x-2 p-2 rounded hover:bg-white/10"
+                >
+                  <span className="text-2xl">📎</span>
+                  <span className="text-sm">{message.attachment_name || 'Download file'}</span>
+                </a>
+              )}
+            </div>
+          )}
+          
+          {/* Message content */}
+          {message.content && <p>{message.content}</p>}
           {message.edited && (
             <span className="text-xs italic ml-2" style={{ color: isOwn ? colors.lightBlue : colors.secondaryText }}>
               (edited)
@@ -285,18 +348,24 @@ function MessageBubble({ message, isOwn, onReply, onEdit, onDelete, onReact }: M
       </div>
     </div>
   );
-}
+});
 
 interface EnhancedChatProps {
   chatId: string;
   chatName: string;
   isGroup?: boolean;
   receiverId?: string;
+  onBackToList?: () => void;
 }
 
-export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: EnhancedChatProps) {
+export function EnhancedChat({ chatId, chatName, isGroup, receiverId, onBackToList }: EnhancedChatProps) {
   const { user } = useAuth();
   const { socket, connected } = useSocket();
+  const router = useRouter();
+  const [isMobile, setIsMobile] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showInfo, setShowInfo] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -305,7 +374,23 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
   const [isOnline, setIsOnline] = useState(false);
   const [lastSeen, setLastSeen] = useState<string>();
   const [isTyping, setIsTyping] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<{ url: string; name: string; mime: string; type: string } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const messageLookup = React.useMemo(() => {
+    const map: Record<string, Message> = {};
+    messages.forEach((m) => { map[m.id] = m; });
+    return map;
+  }, [messages]);
+
+  useEffect(() => {
+    const updateIsMobile = () => setIsMobile(typeof window !== 'undefined' && window.innerWidth <= 768);
+    updateIsMobile();
+    window.addEventListener('resize', updateIsMobile);
+    return () => window.removeEventListener('resize', updateIsMobile);
+  }, []);
 
   useEffect(() => {
     const fetchMessages = async () => {
@@ -493,9 +578,45 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
       }
     };
 
+    // Handle receive_message (unified for personal and group)
+    const handleReceiveMessage = (message: Message) => {
+      if (
+        (isGroup && (message.group_id === chatId || message.group_chat_id === chatId)) ||
+        (!isGroup && ((message.sender_id === receiverId && message.receiver_id === user?.id) ||
+                      (message.sender_id === user?.id && message.receiver_id === receiverId)))
+      ) {
+        setMessages(prev => {
+          if (prev.some(m => m.id === message.id)) {
+            return prev;
+          }
+          return [...prev, message];
+        });
+        
+        // Mark as read if message is from another user
+        if (message.sender_id !== user?.id) {
+          if (isGroup) {
+            apiClient.post(`/chat/groups/${chatId}/mark-read`).catch(() => {});
+          } else {
+            apiClient.post('/messages/mark-all-read', { receiver_id: receiverId }).catch(() => {});
+          }
+        }
+      }
+    };
+
+    // Handle message edited
+    const handleMessageEdited = (data: { id: string; content: string; edited: boolean; edited_at: string }) => {
+      setMessages(prev => prev.map(msg => 
+        msg.id === data.id 
+          ? { ...msg, content: data.content, edited: data.edited, edited_at: data.edited_at }
+          : msg
+      ));
+    };
+
     socket.on('new_message', handleNewMessage);
     socket.on('group_message', handleGroupMessage);
+    socket.on('receive_message', handleReceiveMessage);
     socket.on('message_updated', handleMessageUpdate);
+    socket.on('message_edited', handleMessageEdited);
     socket.on('message_deleted', handleMessageDelete);
     if (isGroup) {
       socket.on('group_typing', handleGroupTyping);
@@ -504,7 +625,9 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
     return () => {
       socket.off('new_message', handleNewMessage);
       socket.off('group_message', handleGroupMessage);
+      socket.off('receive_message', handleReceiveMessage);
       socket.off('message_updated', handleMessageUpdate);
+      socket.off('message_edited', handleMessageEdited);
       socket.off('message_deleted', handleMessageDelete);
       if (isGroup) {
         socket.off('group_typing', handleGroupTyping);
@@ -516,46 +639,102 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const filteredMessages = searchQuery
+    ? messages.filter((m) => m.content?.toLowerCase().includes(searchQuery.toLowerCase()))
+    : messages;
+
+  const scrollToMessage = (id: string) => {
+    const node = messageRefs.current[id];
+    if (node) {
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      node.classList.add('ring-2', 'ring-blue-400');
+      setTimeout(() => {
+        node.classList.remove('ring-2', 'ring-blue-400');
+      }, 1200);
+    }
+    setShowSearch(false);
+  };
+
+  const handleFileUpload = async (file: File) => {
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      // Use fetch directly for FormData since apiClient might not handle it correctly
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+      const response = await fetch(`${API_BASE_URL}/upload/upload`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        throw new Error('Upload failed');
+      }
+      
+      const data = await response.json();
+      setUploadedFile(data);
+      return data;
+    } catch (error) {
+      console.error('Failed to upload file:', error);
+      throw error;
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || sending || !user?.id) return;
+    if ((!newMessage.trim() && !uploadedFile) || sending || uploading || !user?.id || !socket || !connected) return;
 
     setSending(true);
     try {
-      if (isGroup && socket && connected) {
-        // Use socket for group messages
-        socket.emit('group_message', {
-          groupId: chatId,
-          senderId: user.id,
-          content: newMessage.trim(),
-        });
-        setNewMessage('');
-        setReplyingTo(null);
-      } else {
-        // Use API for 1-to-1 messages
-        const payload: {
-          content: string;
-          reply_to?: string;
-          group_chat_id?: string;
-          receiver_id?: string;
-        } = {
-          content: newMessage.trim(),
-        };
-
-        if (replyingTo) {
-          payload.reply_to = replyingTo.id;
-        }
-
-        if (isGroup) {
-          payload.group_chat_id = chatId;
-        } else {
-          payload.receiver_id = receiverId;
-        }
-
-        await apiClient.post('/messages/send', payload);
-        setNewMessage('');
-        setReplyingTo(null);
+      // Upload file if present
+      let attachmentData = null;
+      if (uploadedFile) {
+        attachmentData = uploadedFile;
       }
+
+      // Use unified send_message socket event
+      const messageData: {
+        chatType: 'personal' | 'group';
+        senderId: string;
+        receiverId?: string;
+        groupId?: string;
+        content: string;
+        type: string;
+        attachmentUrl?: string;
+        attachmentName?: string;
+        mimeType?: string;
+        replyTo?: string;
+      } = {
+        chatType: isGroup ? 'group' : 'personal',
+        senderId: user.id,
+        content: newMessage.trim() || '',
+        type: attachmentData ? attachmentData.type : 'text',
+      };
+
+      if (isGroup) {
+        messageData.groupId = chatId;
+      } else {
+        messageData.receiverId = receiverId;
+      }
+
+      if (attachmentData) {
+        messageData.attachmentUrl = attachmentData.url;
+        messageData.attachmentName = attachmentData.name;
+        messageData.mimeType = attachmentData.mime;
+      }
+
+      if (replyingTo) {
+        messageData.replyTo = replyingTo.id;
+      }
+
+      socket.emit('send_message', messageData);
+      setNewMessage('');
+      setReplyingTo(null);
+      setUploadedFile(null);
     } catch (error) {
       console.error('Failed to send message:', error);
     } finally {
@@ -569,9 +748,12 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
 
   const handleEdit = async (message: Message) => {
     const newContent = prompt('Edit message:', message.content);
-    if (newContent && newContent !== message.content) {
+    if (newContent && newContent !== message.content && socket && connected) {
       try {
-        await apiClient.put(`/messages/${message.id}`, { content: newContent });
+        socket.emit('edit_message', {
+          messageId: message.id,
+          newContent: newContent
+        });
       } catch (error) {
         console.error('Failed to edit message:', error);
       }
@@ -604,26 +786,116 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
   }
 
   return (
-    <div className="h-full flex flex-col" style={{ backgroundColor: colors.lightBg }}>
+    <div className="flex flex-col" style={{ backgroundColor: colors.lightBg, height: isMobile ? '100dvh' : '100%' }}>
       <ChatHeader 
         name={chatName} 
         isOnline={isOnline} 
         lastSeen={lastSeen}
         isGroup={isGroup}
+        showBack={isMobile}
+        onBack={() => {
+          if (onBackToList) {
+            onBackToList();
+          } else {
+            router.push('/chat');
+          }
+        }}
+        onSearch={() => setShowSearch(true)}
+        onInfo={() => setShowInfo(true)}
       />
 
-      <div className="flex-1 overflow-y-auto p-4" style={{ backgroundColor: '#ECE5DD' }}>
-        {messages.map((message) => (
+      {showSearch && (
+        <div className="bg-white border-b" style={{ borderColor: colors.borderGray }}>
+          <div className="px-4 py-3 flex items-center space-x-2">
+            <input
+              autoFocus
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search messages..."
+              className="flex-1 px-3 py-2 rounded-lg outline-none border text-sm"
+              style={{ borderColor: colors.borderGray }}
+            />
+            <button
+              type="button"
+              onClick={() => { setShowSearch(false); setSearchQuery(''); }}
+              className="px-3 py-2 text-sm rounded-lg hover:bg-gray-100"
+              style={{ color: colors.secondaryText }}
+            >
+              Close
+            </button>
+          </div>
+          {searchQuery && filteredMessages.length > 0 && (
+            <div className="border-t max-h-48 overflow-y-auto" style={{ borderColor: colors.borderGray }}>
+              {filteredMessages.slice(0, 10).map((message) => (
+                <button
+                  key={message.id}
+                  type="button"
+                  onClick={() => scrollToMessage(message.id)}
+                  className="w-full text-left px-4 py-2 hover:bg-gray-50 border-b last:border-b-0"
+                  style={{ borderColor: colors.borderGray }}
+                >
+                  <p className="text-xs font-medium" style={{ color: colors.secondaryText }}>
+                    {message.sender_name || 'You'} • {new Date(message.created_at).toLocaleString()}
+                  </p>
+                  <p className="text-sm truncate mt-1" style={{ color: colors.primaryText }}>
+                    {message.content}
+                  </p>
+                </button>
+              ))}
+              {filteredMessages.length > 10 && (
+                <div className="px-4 py-2 text-xs text-center" style={{ color: colors.secondaryText }}>
+                  {filteredMessages.length - 10} more results...
+                </div>
+              )}
+            </div>
+          )}
+          {searchQuery && filteredMessages.length === 0 && (
+            <div className="px-4 py-3 text-sm text-center" style={{ color: colors.secondaryText }}>
+              No messages found
+            </div>
+          )}
+        </div>
+      )}
+
+      {showInfo && (
+        <div className="bg-white border-b px-4 py-3 flex items-center justify-between" style={{ borderColor: colors.borderGray }}>
+          <div>
+            <p className="text-sm font-semibold" style={{ color: colors.primaryText }}>
+              {isGroup ? 'Group Info' : 'Chat Info'}
+            </p>
+            <p className="text-xs" style={{ color: colors.secondaryText }}>
+              Name: {chatName} {isGroup ? `(Group ID: ${chatId})` : `(User ID: ${receiverId})`}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowInfo(false)}
+            className="px-3 py-2 text-sm rounded-lg hover:bg-gray-100"
+            style={{ color: colors.secondaryText }}
+          >
+            Close
+          </button>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto p-4 pb-28" style={{ backgroundColor: '#ECE5DD' }}>
+        {(searchQuery ? filteredMessages : messages).map((message) => {
+          const quoted = message.quoted_message || (message.reply_to ? messageLookup[message.reply_to] : undefined);
+          return (
           <MessageBubble
             key={message.id}
+            ref={(el: HTMLDivElement | null) => { messageRefs.current[message.id] = el; }}
             message={message}
             isOwn={message.sender_id === user?.id}
             onReply={handleReply}
             onEdit={handleEdit}
             onDelete={handleDelete}
             onReact={handleReact}
+            quotedMessage={quoted}
           />
-        ))}
+        );
+        })}
         {isTyping && (
           <div className="flex justify-start mb-2">
             <div className="px-4 py-2 rounded-lg bg-white" style={{ border: `1px solid ${colors.borderGray}` }}>
@@ -654,27 +926,58 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
         </div>
       )}
 
-      <form onSubmit={handleSend} className="bg-white p-4 border-t" style={{ borderColor: colors.borderGray }}>
+      {uploadedFile && (
+        <div className="bg-white px-4 py-2 border-t flex items-center justify-between" style={{ borderColor: colors.borderGray }}>
+          <div className="flex-1 flex items-center space-x-2">
+            {uploadedFile.type === 'image' && (
+              <Image
+                src={uploadedFile.url}
+                alt="Preview"
+                width={48}
+                height={48}
+                className="w-12 h-12 object-cover rounded"
+              />
+            )}
+            <div className="flex-1">
+              <p className="text-xs font-medium" style={{ color: colors.primaryBlue }}>Attached:</p>
+              <p className="text-sm truncate" style={{ color: colors.secondaryText }}>{uploadedFile.name}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setUploadedFile(null)}
+            className="ml-2 text-lg"
+            style={{ color: colors.secondaryText }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      <form onSubmit={handleSend} className="bg-white p-4 border-t sticky bottom-0" style={{ borderColor: colors.borderGray }}>
         <div className="flex items-center space-x-2">
           {/* File Attachment Button */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                try {
+                  await handleFileUpload(file);
+                } catch (error) {
+                  console.error('File upload failed:', error);
+                }
+              }
+            }}
+          />
           <button
             type="button"
             className="p-2 rounded-lg hover:bg-gray-100 transition"
             title="Attach file"
-            onClick={() => {
-              // File attachment functionality
-              const input = document.createElement('input');
-              input.type = 'file';
-              input.accept = 'image/*,video/*,.pdf,.doc,.docx';
-              input.onchange = (e) => {
-                const file = (e.target as HTMLInputElement).files?.[0];
-                if (file) {
-                  // Handle file upload
-                  console.log('File selected:', file.name);
-                }
-              };
-              input.click();
-            }}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
           >
             <span className="text-xl">📎</span>
           </button>
@@ -708,7 +1011,7 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId }: Enhanced
           {/* Send Button */}
           <button
             type="submit"
-            disabled={sending || !newMessage.trim()}
+            disabled={sending || uploading || (!newMessage.trim() && !uploadedFile)}
             className="px-6 py-2 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition"
             style={{ backgroundColor: colors.primaryBlue }}
             onMouseEnter={(e) => !sending && newMessage.trim() && (e.currentTarget.style.backgroundColor = colors.darkBlue)}

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { apiClient } from '@/lib/api';
-import { useAuth } from '@/contexts/AuthContext';
+// import { useAuth } from '@/contexts/AuthContext';
 import { colors } from '@/lib/colors';
 
 interface Chat {
@@ -18,7 +18,7 @@ interface Chat {
 export default function ChatHomePage() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
-  const { user } = useAuth();
+  // const { user } = useAuth();
 
   useEffect(() => {
     const fetchChats = async () => {
@@ -56,9 +56,9 @@ export default function ChatHomePage() {
           </div>
         ) : (
           <div style={{ borderTop: `1px solid ${colors.borderGray}` }}>
-            {chats.map((chat) => (
+            {chats.map((chat, index) => (
               <Link
-                key={chat.id}
+                key={chat.id ?? chat.receiver_id ?? `chat-${index}`}
                 href={`/chat/${chat.receiver_id}`}
                 className="block p-4 transition"
                 style={{ borderBottom: `1px solid ${colors.borderGray}` }}
