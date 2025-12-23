@@ -7,15 +7,28 @@ import { useAuth } from '@/contexts/AuthContext';
 import { colors } from '@/lib/colors';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
 
+/* ---------------- TYPES ---------------- */
+
 interface User {
   id: string;
   name: string;
   email: string;
 }
 
+interface Group {
+  data: any;
+  id: string;
+  name: string;
+  description?: string;
+  member_ids: string[];
+}
+
+/* ---------------- COMPONENT ---------------- */
+
 export default function CreateGroupPage() {
   const router = useRouter();
   const { user } = useAuth();
+
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [availableUsers, setAvailableUsers] = useState<User[]>([]);
@@ -24,13 +37,17 @@ export default function CreateGroupPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
+  /* ---------------- FETCH USERS ---------------- */
+
   useEffect(() => {
     const fetchUsers = async () => {
       try {
-        const response = await apiClient.get<{ users: User[] }>('/messages/users');
-        setAvailableUsers(response.users || []);
-      } catch (error) {
-        console.error('Failed to fetch users:', error);
+        const response = await apiClient.get<{
+          data: any; users: User[] 
+}>('/messages/users');
+        setAvailableUsers(response.data.users || []);
+      } catch (err) {
+        console.error('Failed to fetch users:', err);
       } finally {
         setLoading(false);
       }
@@ -39,13 +56,17 @@ export default function CreateGroupPage() {
     fetchUsers();
   }, []);
 
+  /* ---------------- HELPERS ---------------- */
+
   const toggleUser = (userId: string) => {
-    setSelectedUsers(prev =>
+    setSelectedUsers((prev) =>
       prev.includes(userId)
-        ? prev.filter(id => id !== userId)
+        ? prev.filter((id) => id !== userId)
         : [...prev, userId]
     );
   };
+
+  /* ---------------- SUBMIT ---------------- */
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,19 +83,23 @@ export default function CreateGroupPage() {
     }
 
     setCreating(true);
+
     try {
-      const group = await apiClient.post('/chat/groups', {
+      const response = await apiClient.post<Group>('/chat/groups', {
         name: name.trim(),
         description: description.trim() || undefined,
         member_ids: selectedUsers,
       });
-      router.push(`/chat/group/${group.id}`);
+
+      router.push(`/chat/group/${response.data.id}`);
     } catch (err: any) {
-      setError(err.detail || 'Failed to create group. Please try again.');
+      setError(err?.detail || 'Failed to create group. Please try again.');
     } finally {
       setCreating(false);
     }
   };
+
+  /* ---------------- LOADING ---------------- */
 
   if (loading) {
     return (
@@ -84,59 +109,82 @@ export default function CreateGroupPage() {
     );
   }
 
+  /* ---------------- UI ---------------- */
+
   return (
     <div className="h-full flex flex-col" style={{ backgroundColor: colors.lightBg }}>
       <div className="bg-white p-6 border-b" style={{ borderColor: colors.borderGray }}>
-        <h1 className="text-2xl font-bold" style={{ color: colors.primaryText }}>Create Group Chat</h1>
+        <h1 className="text-2xl font-bold" style={{ color: colors.primaryText }}>
+          Create Group Chat
+        </h1>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-2xl mx-auto">
-          <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-6">
+          <form
+            onSubmit={handleSubmit}
+            className="bg-white rounded-lg shadow p-6 space-y-6"
+          >
             {error && (
-              <div className="px-4 py-3 rounded-lg text-sm" style={{ backgroundColor: '#FEE', borderColor: colors.danger, borderWidth: '1px', borderStyle: 'solid', color: colors.danger }}>
+              <div
+                className="px-4 py-3 rounded-lg text-sm"
+                style={{
+                  backgroundColor: '#FEE',
+                  borderColor: colors.danger,
+                  borderWidth: '1px',
+                  borderStyle: 'solid',
+                  color: colors.danger,
+                }}
+              >
                 {error}
               </div>
             )}
 
+            {/* Group Name */}
             <div>
-              <label htmlFor="name" className="block text-sm font-medium mb-2" style={{ color: colors.primaryText }}>
+              <label className="block text-sm font-medium mb-2" style={{ color: colors.primaryText }}>
                 Group Name *
               </label>
               <input
-                id="name"
                 type="text"
-                required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                required
                 className="w-full px-4 py-3 rounded-lg outline-none transition"
-                style={{ borderColor: colors.borderGray, borderWidth: '1px', borderStyle: 'solid' }}
+                style={{ borderColor: colors.borderGray, borderWidth: 1, borderStyle: 'solid' }}
                 placeholder="Enter group name"
               />
             </div>
 
+            {/* Description */}
             <div>
-              <label htmlFor="description" className="block text-sm font-medium mb-2" style={{ color: colors.primaryText }}>
+              <label className="block text-sm font-medium mb-2" style={{ color: colors.primaryText }}>
                 Description (Optional)
               </label>
               <textarea
-                id="description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={3}
                 className="w-full px-4 py-3 rounded-lg outline-none transition"
-                style={{ borderColor: colors.borderGray, borderWidth: '1px', borderStyle: 'solid' }}
+                style={{ borderColor: colors.borderGray, borderWidth: 1, borderStyle: 'solid' }}
                 placeholder="Enter group description"
               />
             </div>
 
+            {/* Users */}
             <div>
               <label className="block text-sm font-medium mb-3" style={{ color: colors.primaryText }}>
                 Select Members ({selectedUsers.length} selected)
               </label>
-              <div className="border rounded-lg p-4 max-h-96 overflow-y-auto" style={{ borderColor: colors.borderGray }}>
+
+              <div
+                className="border rounded-lg p-4 max-h-96 overflow-y-auto"
+                style={{ borderColor: colors.borderGray }}
+              >
                 {availableUsers.length === 0 ? (
-                  <p className="text-center py-4" style={{ color: colors.secondaryText }}>No users available</p>
+                  <p className="text-center py-4" style={{ color: colors.secondaryText }}>
+                    No users available
+                  </p>
                 ) : (
                   <div className="space-y-2">
                     {availableUsers.map((user) => (
@@ -148,12 +196,16 @@ export default function CreateGroupPage() {
                           type="checkbox"
                           checked={selectedUsers.includes(user.id)}
                           onChange={() => toggleUser(user.id)}
-                          className="w-4 h-4 rounded"
+                          className="w-4 h-4"
                           style={{ accentColor: colors.primaryBlue }}
                         />
                         <div className="flex-1">
-                          <p className="font-medium" style={{ color: colors.primaryText }}>{user.name}</p>
-                          <p className="text-sm" style={{ color: colors.secondaryText }}>{user.email}</p>
+                          <p className="font-medium" style={{ color: colors.primaryText }}>
+                            {user.name}
+                          </p>
+                          <p className="text-sm" style={{ color: colors.secondaryText }}>
+                            {user.email}
+                          </p>
                         </div>
                       </label>
                     ))}
@@ -162,14 +214,13 @@ export default function CreateGroupPage() {
               </div>
             </div>
 
+            {/* Buttons */}
             <div className="flex space-x-4">
               <button
                 type="submit"
                 disabled={creating}
-                className="px-6 py-3 text-white rounded-lg font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                className="px-6 py-3 text-white rounded-lg font-medium disabled:opacity-50 transition"
                 style={{ backgroundColor: colors.primaryBlue }}
-                onMouseEnter={(e) => !creating && (e.currentTarget.style.backgroundColor = colors.darkBlue)}
-                onMouseLeave={(e) => !creating && (e.currentTarget.style.backgroundColor = colors.primaryBlue)}
               >
                 {creating ? (
                   <span className="flex items-center">
@@ -180,13 +231,12 @@ export default function CreateGroupPage() {
                   'Create Group'
                 )}
               </button>
+
               <button
                 type="button"
                 onClick={() => router.back()}
                 className="px-6 py-3 rounded-lg font-medium transition"
                 style={{ backgroundColor: colors.borderGray, color: colors.primaryText }}
-                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#C0C0C0'}
-                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = colors.borderGray}
               >
                 Cancel
               </button>
@@ -197,5 +247,3 @@ export default function CreateGroupPage() {
     </div>
   );
 }
-
-
