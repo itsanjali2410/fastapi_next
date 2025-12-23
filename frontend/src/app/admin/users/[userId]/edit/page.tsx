@@ -4,6 +4,12 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
+type User = {
+  name: string;
+  email: string;
+  role: string;
+  is_active: boolean;
+};
 
 export default function EditUserPage() {
   const params = useParams();
@@ -20,7 +26,7 @@ export default function EditUserPage() {
   useEffect(() => {
     const fetchUser = async () => {
       try {
-        const user = await apiClient.get(`/users/${userId}`);
+        const user = await apiClient.get<User>(`/users/${userId}`);
         setName(user.name);
         setEmail(user.email);
         setRole(user.role);
