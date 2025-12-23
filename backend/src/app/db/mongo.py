@@ -8,8 +8,8 @@ db = None
 
 async def connect_to_mongo():
     global client, db
-    client = AsyncIOMotorClient(settings.MONGO_URI)
-    db = client[settings.MONGO_DB]
+    client = AsyncIOMotorClient(settings.MONGO_URL)
+    db = client[settings.DB_NAME]
     print("✅ Connected to MongoDB")
 
 
