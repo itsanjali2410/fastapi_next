@@ -80,6 +80,21 @@ class GroupChatService:
             groups.append(GroupChatInDB(**group_data))
 
         return groups
+    async def update_last_seen_message(self, user_id: str, group_id: str, last_message_id: str):
+        await self.db.conversation_participants.update_one(
+    {
+        "user_id": user_id,
+        "conversation_id": group_id,
+        "type": "group"
+    },
+    {
+        "$set": {
+            "last_seen_message_id": last_message_id,
+            "last_seen_at": datetime.utcnow()
+        },
+        "$unset": {"unread_count": ""}
+    }
+)
 
     async def add_members(self, group_id: str, user_ids: List[str]) -> bool:
         """Add members to a group"""

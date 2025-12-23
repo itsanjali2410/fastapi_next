@@ -7,6 +7,8 @@ import { apiClient } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/contexts/SocketContext';
 import { colors } from '@/lib/colors';
+import GroupMembersList from '@/components/GroupMembersList';
+import { formatHeaderTime, formatTimeShort } from '@/lib/timeUtils';
 
 interface Message {
   id: string;
@@ -36,13 +38,14 @@ interface ChatHeaderProps {
   isOnline?: boolean;
   lastSeen?: string;
   isGroup?: boolean;
+  groupHeaderTime?: string | null;
   showBack?: boolean;
   onBack?: () => void;
   onSearch?: () => void;
   onInfo?: () => void;
 }
 
-function ChatHeader({ name, isOnline, lastSeen, isGroup, showBack, onBack, onSearch, onInfo }: ChatHeaderProps) {
+function ChatHeader({ name, isOnline, lastSeen, isGroup, groupHeaderTime, showBack, onBack, onSearch, onInfo }: ChatHeaderProps) {
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -81,9 +84,13 @@ function ChatHeader({ name, isOnline, lastSeen, isGroup, showBack, onBack, onSea
         </div>
         <div>
           <h2 className="text-lg font-semibold" style={{ color: colors.primaryText }}>{name}</h2>
-          {!isGroup && (
+          {!isGroup ? (
             <p className="text-xs" style={{ color: colors.secondaryText }}>
-              {isOnline ? 'Online' : lastSeen ? `Last seen ${new Date(lastSeen).toLocaleTimeString()}` : 'Offline'}
+              {isOnline ? 'Online' : lastSeen ? `Last seen ${formatHeaderTime(lastSeen)}` : 'Offline'}
+            </p>
+          ) : (
+            <p className="text-xs" style={{ color: colors.secondaryText }}>
+              {groupHeaderTime || ''}
             </p>
           )}
         </div>
@@ -101,7 +108,7 @@ function ChatHeader({ name, isOnline, lastSeen, isGroup, showBack, onBack, onSea
         
         {showMenu && (
           <div
-            className="absolute right-0 mt-2 bg-white rounded-lg shadow-lg py-1 z-50 min-w-[160px]"
+            className="absolute right-0 mt-2 bg-white rounded-lg shadow-lg py-1 z-50 min-w-40"
             style={{ border: `1px solid ${colors.borderGray}` }}
           >
             <button
@@ -274,12 +281,17 @@ const MessageBubble = React.forwardRef<HTMLDivElement, MessageBubbleProps>(funct
                 </div>
               )}
               <span className="text-xs" style={{ color: isOwn ? colors.lightBlue : colors.secondaryText }}>
-                {new Date(message.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                {formatTimeShort(message.created_at)}
               </span>
               {isOwn && (
-                <span className="text-xs" style={{ color: isRead ? colors.primaryBlue : (isDelivered ? colors.secondaryText : 'transparent') }}>
-                  {isRead ? '✓✓' : isDelivered ? '✓' : '○'}
-                </span>
+                <div className="flex items-center space-x-1">
+                  <span className="text-xs" style={{ color: isRead ? '#FFFFFF' : (isDelivered ? colors.secondaryText : 'transparent') }}>
+                    {isRead ? '✓✓' : isDelivered ? '✓' : '○'}
+                  </span>
+                  {isRead && deliveryStatus && (deliveryStatus.read_at || deliveryStatus.read_at || deliveryStatus.read_at) && (
+                    <span className="text-xs" style={{ color: colors.secondaryText }}>{formatHeaderTime((deliveryStatus.read_at || deliveryStatus.read_at) as string)}</span>
+                  )}
+                </div>
               )}
             </div>
             <div className="relative" ref={menuRef}>
@@ -392,6 +404,8 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId, onBackToLi
     return () => window.removeEventListener('resize', updateIsMobile);
   }, []);
 
+  const [groupLastSeen, setGroupLastSeen] = useState<{ last_message?: any; read_by?: any[]; header_time?: string } | null>(null);
+
   useEffect(() => {
     const fetchMessages = async () => {
       try {
@@ -400,6 +414,14 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId, onBackToLi
           const response = await apiClient.get<{ messages: Message[]; page: number; limit: number; total: number; has_more: boolean }>(`/chat/groups/${chatId}/messages?page=1`);
           setMessages(response.messages || []);
           
+          // Fetch last-seen info for group
+          try {
+            const lastSeen = await apiClient.get<{ last_message?: any; read_by?: any[]; header_time?: string }>(`/chat/groups/${chatId}/last-seen`);
+            setGroupLastSeen(lastSeen);
+          } catch (err) {
+            // ignore
+          }
+
           // Mark all group messages as read when group is opened
           if (user?.id) {
             try {
@@ -598,6 +620,8 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId, onBackToLi
             apiClient.post(`/chat/groups/${chatId}/mark-read`).catch(() => {});
           } else {
             apiClient.post('/messages/mark-all-read', { receiver_id: receiverId }).catch(() => {});
+            // Mark this specific message as delivered to the receiver
+            apiClient.post(`/messages/${message.id}/mark-delivered`).catch(() => {});
           }
         }
       }
@@ -618,6 +642,46 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId, onBackToLi
     socket.on('message_updated', handleMessageUpdate);
     socket.on('message_edited', handleMessageEdited);
     socket.on('message_deleted', handleMessageDelete);
+    socket.on('messages_read', (data: { receiver_id?: string; timestamp?: string }) => {
+      // For personal chats: if current chat is the receiver, update delivery status timestamps
+      if (!isGroup && data.receiver_id && data.receiver_id === receiverId) {
+        const ts = data.timestamp;
+        setMessages(prev => prev.map(m => {
+          if (m.sender_id === user?.id && m.receiver_id === receiverId) {
+            const updated = { ...m, delivery_status: { ...(m.delivery_status || {}) } };
+            updated.delivery_status[receiverId as string] = { delivered: true, read: true, read_at: ts } as any;
+            return updated;
+          }
+          return m;
+        }));
+      }
+    });
+
+    socket.on('group_read_update', async (data: { groupId: string; userId: string; userName?: string; seenAt?: string }) => {
+      if (isGroup && data.groupId === chatId) {
+        // Refresh group last-seen info
+        try {
+          const lastSeen = await apiClient.get<{ last_message?: any; read_by?: any[]; header_time?: string }>(`/chat/groups/${chatId}/last-seen`);
+          setGroupLastSeen(lastSeen);
+        } catch (err) {
+          // ignore
+        }
+      }
+    });
+
+    socket.on('message_delivered', (data: { messageId: string; receiver_id?: string; timestamp?: string }) => {
+      // Update message delivery status for sender view
+      setMessages(prev => prev.map(m => {
+        if (m.id === data.messageId) {
+          const updated = { ...m, delivery_status: { ...(m.delivery_status || {}) } };
+          const rid = data.receiver_id as string;
+          updated.delivery_status[rid] = { delivered: true, delivered_at: data.timestamp } as any;
+          return updated;
+        }
+        return m;
+      }));
+    });
+
     if (isGroup) {
       socket.on('group_typing', handleGroupTyping);
     }
@@ -629,6 +693,9 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId, onBackToLi
       socket.off('message_updated', handleMessageUpdate);
       socket.off('message_edited', handleMessageEdited);
       socket.off('message_deleted', handleMessageDelete);
+      socket.off('messages_read');
+      socket.off('group_read_update');
+      socket.off('message_delivered');
       if (isGroup) {
         socket.off('group_typing', handleGroupTyping);
       }
@@ -792,6 +859,7 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId, onBackToLi
         isOnline={isOnline} 
         lastSeen={lastSeen}
         isGroup={isGroup}
+        groupHeaderTime={groupLastSeen?.header_time || null}
         showBack={isMobile}
         onBack={() => {
           if (onBackToList) {
@@ -859,23 +927,51 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId, onBackToLi
       )}
 
       {showInfo && (
-        <div className="bg-white border-b px-4 py-3 flex items-center justify-between" style={{ borderColor: colors.borderGray }}>
-          <div>
-            <p className="text-sm font-semibold" style={{ color: colors.primaryText }}>
-              {isGroup ? 'Group Info' : 'Chat Info'}
-            </p>
-            <p className="text-xs" style={{ color: colors.secondaryText }}>
-              Name: {chatName} {isGroup ? `(Group ID: ${chatId})` : `(User ID: ${receiverId})`}
-            </p>
+        <div className="bg-white border-b px-4 py-3" style={{ borderColor: colors.borderGray }}>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold" style={{ color: colors.primaryText }}>
+                {isGroup ? 'Group Info' : 'Chat Info'}
+              </p>
+              <p className="text-xs" style={{ color: colors.secondaryText }}>
+                Name: {chatName} {isGroup ? `(Group ID: ${chatId})` : `(User ID: ${receiverId})`}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowInfo(false)}
+              className="px-3 py-2 text-sm rounded-lg hover:bg-gray-100"
+              style={{ color: colors.secondaryText }}
+            >
+              Close
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowInfo(false)}
-            className="px-3 py-2 text-sm rounded-lg hover:bg-gray-100"
-            style={{ color: colors.secondaryText }}
-          >
-            Close
-          </button>
+
+          {isGroup && (
+            <div className="mt-3 grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm font-medium" style={{ color: colors.primaryText }}>Members</p>
+                <div className="mt-2 space-y-2">
+                  <GroupMembersList groupId={chatId} currentUser={user} />
+                </div>
+              </div>
+              <div>
+                <p className="text-sm font-medium" style={{ color: colors.primaryText }}>Seen by</p>
+                <div className="mt-2 space-y-2 text-xs" style={{ color: colors.secondaryText }}>
+                  {groupLastSeen?.read_by && groupLastSeen.read_by.length > 0 ? (
+                    groupLastSeen.read_by.map((r: any) => (
+                      <div key={r.userId} className="flex items-center justify-between">
+                        <div>{r.userName}</div>
+                        <div className="text-right">{r.seenAt}</div>
+                      </div>
+                    ))
+                  ) : (
+                    <div>No one has read the latest message yet.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

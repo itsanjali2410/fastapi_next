@@ -67,13 +67,16 @@ class MessagesService:
         tasks = []
         for participant in participants:
             user_id = participant["user_id"]
+            # Normalize IDs to strings to avoid ObjectId vs str mismatches
+            user_id_str = str(user_id) if user_id is not None else None
             display_name = participant.get("display_name")
             image = participant.get("image") or conversation_image
             other_user_id = participant.get("other_user_id")
-            is_sender = (sender_id and user_id == sender_id)
+            other_user_id_str = str(other_user_id) if other_user_id is not None else None
+            is_sender = (sender_id is not None and str(sender_id) == user_id_str)
 
             set_doc = {
-                "user_id": user_id,
+                "user_id": user_id_str,
                 "conversation_id": str(conv_id_value),
                 "type": convo_type,
                 "name": display_name,
@@ -83,24 +86,30 @@ class MessagesService:
 
             if image:
                 set_doc["image"] = image
-            if other_user_id:
-                set_doc["other_user_id"] = other_user_id
+            if other_user_id_str:
+                set_doc["other_user_id"] = other_user_id_str
             if group_id:
                 set_doc["group_id"] = group_id
 
             filter_query = {
-                "user_id": user_id,
+                "user_id": user_id_str,
                 "conversation_id": str(conv_id_value)
             }
 
-            if not is_sender and last_message_content:
-                update_operation = {
-                    "$set": set_doc,
-                    "$inc": {"unread_count": 1}
-                }
-            else:
-                set_doc["unread_count"] = 0
-                update_operation = {"$set": set_doc}
+            # Determine update operation
+            if convo_type == "group":
+                if is_sender:
+                    update_operation = {"$set": set_doc, "$unset": {"unread_count": ""}}
+                else:
+                    if last_message_content:
+                        update_operation = {"$set": set_doc, "$inc": {"unread_count": 1}}
+                    else:
+                        update_operation = {"$set": set_doc}
+            else:  # DM
+                if is_sender:
+                    update_operation = {"$set": set_doc, "$unset": {"unread_count": ""}}
+                else:
+                    update_operation = {"$set": set_doc, "$inc": {"unread_count": 1}}
 
             tasks.append(
                 self.conversations_collection.update_one(
@@ -128,13 +137,18 @@ class MessagesService:
 
         return conversations
 
-    async def mark_conversation_read(self, user_id: str, conversation_id: str) -> bool:
-        """Mark all messages in a conversation as read (reset unread_count to 0)."""
+    async def mark_conversation_seen(self, user_id: str, conversation_id: str, last_seen_message_id: Optional[str] = None) -> int:
+        """Mark a conversation as seen for a user (clear unread_count, set last seen)."""
+        update = {"$set": {"last_seen_at": datetime.utcnow()}, "$unset": {"unread_count": ""}}
+        if last_seen_message_id:
+            update["$set"]["last_seen_message_id"] = last_seen_message_id
         result = await self.conversations_collection.update_one(
             {"user_id": user_id, "conversation_id": conversation_id},
-            {"$set": {"unread_count": 0}}
+            update,
+            upsert=True
         )
-        return result.modified_count > 0 or result.matched_count > 0
+        return result.modified_count
+
 
     async def send_message(
         self, 

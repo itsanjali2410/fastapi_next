@@ -87,9 +87,8 @@ export const groupApi = {
    * Get paginated messages for a group
    */
   async getGroupMessages(groupId: string, page: number = 1): Promise<GroupMessagesResponse> {
-    return apiClient.get<GroupMessagesResponse>(`/chat/groups/${groupId}/messages`, {
-      params: { page, limit: 50 }
-    });
+    const queryParams = new URLSearchParams({ page: page.toString(), limit: '50' });
+    return apiClient.get<GroupMessagesResponse>(`/chat/groups/${groupId}/messages?${queryParams}`);
   },
 
   /**

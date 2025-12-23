@@ -43,8 +43,9 @@ class GroupChatListItem(BaseModel):
     avatar_url: Optional[str] = None
     last_message: Optional[str] = None
     last_message_timestamp: Optional[datetime] = None
-    unread_count: int = 0
+    unread_count: Optional[int] = None
     member_count: int = 0
+    last_seen_at: Optional[datetime] = None
 
 class GroupChatListResponse(BaseModel):
     groups: List[GroupChatListItem]

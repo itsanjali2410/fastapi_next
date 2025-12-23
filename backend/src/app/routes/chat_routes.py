@@ -94,7 +94,7 @@ async def get_chat_list(
         # Calculate unread count for this user
         unread_count = await messages_collection.count_documents({
             "group_chat_id": group.id,
-            "readBy": {"$ne": current_user.id}
+            "read_by": {"$ne": current_user.id}
         })
         
         # Handle datetime conversion

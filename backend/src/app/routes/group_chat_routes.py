@@ -261,6 +261,40 @@ async def add_members(
             detail="Failed to add members"
         )
 
+    # Fetch updated group and broadcast changes
+    updated_group = await group_service.get_group_chat(group_id)
+    # Update conversation participants for all members
+    from src.app.services.messages_service import MessagesService
+    db = get_database()
+    messages_service = MessagesService(db)
+    participants = [{"user_id": m, "display_name": updated_group.name} for m in updated_group.members]
+    await messages_service.upsert_conversation_participants(
+        conversation_id=group_id,
+        convo_type="group",
+        participants=participants,
+        last_message_content=None,
+        last_message_at=None,
+        group_id=group_id
+    )
+
+    # Emit group member added event
+    from src.app.socketio_manager import socketio_manager
+    added_names = []
+    for uid in member_data.user_ids:
+        user_obj = await db.users.find_one({"_id": ObjectId(uid)})
+        if user_obj:
+            added_names.append(user_obj.get("name", "Unknown"))
+
+    if socketio_manager.sio:
+        for member_id in updated_group.members:
+            member_socket = socketio_manager.user_sockets.get(member_id)
+            if member_socket:
+                await socketio_manager.sio.emit('group_member_added', {
+                    "groupId": group_id,
+                    "addedUserIds": member_data.user_ids,
+                    "addedUserNames": added_names
+                }, room=member_socket)
+
     return {"message": "Members added successfully"}
 
 @router.delete("/{group_id}/members/{user_id}", response_model=dict)
@@ -291,6 +325,30 @@ async def remove_member(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to remove member"
         )
+
+    # Update conversation participants (remove the conversation entry for the removed user)
+    from src.app.services.messages_service import MessagesService
+    db = get_database()
+    messages_service = MessagesService(db)
+    await messages_service.conversations_collection.delete_one({"user_id": user_id, "conversation_id": group_id})
+
+    # Emit group member removed event
+    from src.app.socketio_manager import socketio_manager
+    removed_name = None
+    user_obj = await db.users.find_one({"_id": ObjectId(user_id)})
+    if user_obj:
+        removed_name = user_obj.get("name")
+
+    updated_group = await group_service.get_group_chat(group_id)
+    if socketio_manager.sio and updated_group:
+        for member_id in updated_group.members:
+            member_socket = socketio_manager.user_sockets.get(member_id)
+            if member_socket:
+                await socketio_manager.sio.emit('group_member_removed', {
+                    "groupId": group_id,
+                    "removedUserId": user_id,
+                    "removedUserName": removed_name
+                }, room=member_socket)
 
     return {"message": "Member removed successfully"}
 
@@ -398,17 +456,28 @@ async def mark_group_messages_read(
             detail="You are not a member of this group"
         )
     
-    # Mark all unread messages as read by adding user to readBy array
+    # Mark all unread messages as read by adding user to read_by array and record timestamps
     messages_collection = db.messages
-    result = await messages_collection.update_many(
-        {"group_chat_id": group_id, "readBy": {"$ne": current_user.id}},
-        {"$addToSet": {"readBy": current_user.id}}
-    )
-    
+    # First find the messages to update
+    unread_query = {"group_chat_id": group_id, "read_by": {"$ne": current_user.id}}
+    messages_to_update = []
+    async for msg in messages_collection.find(unread_query):
+        messages_to_update.append(msg["_id"])
+
+    now = datetime.utcnow()
+    for msg_id in messages_to_update:
+        await messages_collection.update_one(
+            {"_id": msg_id},
+            {
+                "$addToSet": {"read_by": current_user.id},
+                "$set": {f"read_by_details.{current_user.id}": now}
+            }
+        )
+
     # Get updated unread count (should be 0 now)
     unread_count = await messages_collection.count_documents({
         "group_chat_id": group_id,
-        "readBy": {"$ne": current_user.id}
+        "read_by": {"$ne": current_user.id}
     })
     
     # Emit unread update to user
@@ -419,10 +488,83 @@ async def mark_group_messages_read(
             "groupId": group_id,
             "unreadCount": unread_count
         }, room=user_socket)
-    
+
+    # Emit group read update to all members so UI can show who saw messages
+    if socketio_manager.sio and group:
+        for member_id in group.members:
+            member_socket = socketio_manager.user_sockets.get(member_id)
+            if member_socket:
+                await socketio_manager.sio.emit('group_read_update', {
+                    "groupId": group_id,
+                    "userId": current_user.id,
+                    "userName": current_user.name,
+                    "seenAt": now.isoformat()
+                }, room=member_socket)
+
     return {
         "message": "Messages marked as read",
         "unreadCount": unread_count,
-        "modifiedCount": result.modified_count
+        "modifiedCount": len(messages_to_update)
+    }
+
+
+@router.get("/{group_id}/last-seen")
+async def get_group_last_seen(
+    group_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+    group_service: GroupChatService = Depends(get_group_chat_service),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """Get last message and per-user last-seen timestamps (formatted for IST)."""
+    group = await group_service.get_group_chat(group_id)
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+
+    messages_collection = db.messages
+    latest_msg = None
+    async for msg in messages_collection.find({"group_chat_id": group_id}).sort("created_at", -1).limit(1):
+        latest_msg = msg
+        break
+
+    if not latest_msg:
+        return {"last_message": None, "read_by": [], "header_time": None}
+
+    # Build read_by list with names and formatted times
+    from src.app.utils.time_utils import format_relative_time, to_ist
+
+    read_by_details = latest_msg.get("read_by_details", {})
+    read_by_list = []
+    for user_id, ts in read_by_details.items():
+        try:
+            user_data = await db.users.find_one({"_id": ObjectId(user_id)})
+            user_name = user_data.get("name") if user_data else "Unknown"
+        except Exception:
+            user_name = "Unknown"
+        # ts may be datetime or ISO string; normalize
+        if isinstance(ts, str):
+            try:
+                seen_dt = datetime.fromisoformat(ts)
+            except Exception:
+                seen_dt = datetime.utcnow()
+        else:
+            seen_dt = ts
+
+        read_by_list.append({
+            "userId": user_id,
+            "userName": user_name,
+            "seenAt": format_relative_time(seen_dt),
+            "seenAtISO": to_ist(seen_dt).isoformat()
+        })
+
+    header_time = format_relative_time(latest_msg.get("created_at"))
+
+    return {
+        "last_message": {
+            "id": str(latest_msg.get("_id")),
+            "content": latest_msg.get("content"),
+            "createdAt": latest_msg.get("created_at")
+        },
+        "read_by": read_by_list,
+        "header_time": header_time
     }
 

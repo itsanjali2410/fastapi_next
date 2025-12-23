@@ -618,29 +618,101 @@ async def mark_message_read(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Message not found"
         )
-    
-    # Update read status
+
+    now = datetime.utcnow()
+
+    # If this is a group message, update read_by and read_by_details
+    if message.get("group_chat_id"):
+        await messages_service.collection.update_one(
+            {"_id": ObjectId(message_id)},
+            {
+                "$addToSet": {"read_by": current_user.id},
+                "$set": {f"read_by_details.{current_user.id}": now, "updated_at": now}
+            }
+        )
+    else:
+        # Update read status for personal message
+        delivery_status = message.get("delivery_status", {})
+        if current_user.id not in delivery_status:
+            delivery_status[current_user.id] = {}
+
+        delivery_status[current_user.id]["delivered"] = True
+        delivery_status[current_user.id]["read"] = True
+        delivery_status[current_user.id]["read_at"] = now
+        delivery_status[current_user.id]["read_by"] = current_user.id
+
+        await messages_service.collection.update_one(
+            {"_id": ObjectId(message_id)},
+            {
+                "$set": {
+                    "is_read": True,
+                    "delivery_status": delivery_status,
+                    "updated_at": now
+                }
+            }
+        )
+
+    # Emit read receipt (include timestamp)
+    from src.app.socketio_manager import socketio_manager
+    if message.get("group_chat_id"):
+        # Emit group read update to group members
+        from src.app.services.group_chat_service import GroupChatService
+        db = get_database()
+        group_service = GroupChatService(db)
+        group = await group_service.get_group_chat(message["group_chat_id"])
+        if group and socketio_manager.sio:
+            for member_id in group.members:
+                member_socket = socketio_manager.user_sockets.get(member_id)
+                if member_socket:
+                    await socketio_manager.sio.emit('group_read_update', {
+                        "groupId": message["group_chat_id"],
+                        "userId": current_user.id,
+                        "userName": current_user.name,
+                        "seenAt": now.isoformat()
+                    }, room=member_socket)
+    else:
+        await socketio_manager.emit_messages_read(message["sender_id"], current_user.id, timestamp=now.isoformat())
+
+    return {"message": "Message marked as read"}
+
+
+@router.post("/{message_id}/mark-delivered", response_model=dict)
+async def mark_message_delivered(
+    message_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+    messages_service: MessagesService = Depends(get_messages_service)
+):
+    """Mark a message as delivered to the current user"""
+    message = await messages_service.collection.find_one({"_id": ObjectId(message_id)})
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message not found"
+        )
+
+    now = datetime.utcnow()
     delivery_status = message.get("delivery_status", {})
     if current_user.id not in delivery_status:
         delivery_status[current_user.id] = {}
-    
+
     delivery_status[current_user.id]["delivered"] = True
-    delivery_status[current_user.id]["read"] = True
-    delivery_status[current_user.id]["read_at"] = datetime.utcnow()
-    delivery_status[current_user.id]["read_by"] = current_user.id
-    
+    delivery_status[current_user.id]["delivered_at"] = now
+
     await messages_service.collection.update_one(
         {"_id": ObjectId(message_id)},
-        {
-            "$set": {
-                "is_read": True,
-                "delivery_status": delivery_status,
-                "updated_at": datetime.utcnow()
-            }
-        }
+        {"$set": {"delivery_status": delivery_status, "updated_at": now}}
     )
-    
-    return {"message": "Message marked as read"}
+
+    # Emit delivered event to sender
+    from src.app.socketio_manager import socketio_manager
+    if socketio_manager.sio:
+        await socketio_manager.sio.emit('message_delivered', {
+            "messageId": message_id,
+            "receiver_id": current_user.id,
+            "timestamp": now.isoformat()
+        }, room=socketio_manager.user_sockets.get(message["sender_id"]))
+
+    return {"message": "Message marked as delivered"}
 
 @router.post("/mark-all-read", response_model=dict)
 async def mark_all_messages_read(
@@ -688,30 +760,38 @@ async def mark_all_messages_read(
         }
     )
     
-    # Update delivery_status for all updated messages
+    # Update delivery_status or read_by_details for all updated messages
     if result.modified_count > 0:
-        # Get all updated messages to update their delivery_status
-        updated_messages = []
         async for msg in messages_service.collection.find(query):
-            delivery_status = msg.get("delivery_status", {})
-            if current_user.id not in delivery_status:
-                delivery_status[current_user.id] = {}
-            delivery_status[current_user.id]["delivered"] = True
-            delivery_status[current_user.id]["read"] = True
-            delivery_status[current_user.id]["read_at"] = now
-            delivery_status[current_user.id]["read_by"] = current_user.id
-            
-            await messages_service.collection.update_one(
-                {"_id": msg["_id"]},
-                {"$set": {"delivery_status": delivery_status}}
-            )
+            if msg.get("group_chat_id"):
+                # For group messages, add read_by and timestamp
+                await messages_service.collection.update_one(
+                    {"_id": msg["_id"]},
+                    {
+                        "$addToSet": {"read_by": current_user.id},
+                        "$set": {f"read_by_details.{current_user.id}": now}
+                    }
+                )
+            else:
+                delivery_status = msg.get("delivery_status", {})
+                if current_user.id not in delivery_status:
+                    delivery_status[current_user.id] = {}
+                delivery_status[current_user.id]["delivered"] = True
+                delivery_status[current_user.id]["read"] = True
+                delivery_status[current_user.id]["read_at"] = now
+                delivery_status[current_user.id]["read_by"] = current_user.id
+
+                await messages_service.collection.update_one(
+                    {"_id": msg["_id"]},
+                    {"$set": {"delivery_status": delivery_status}}
+                )
     
     # Emit chat list update to both users (for 1-to-1) or all group members
     from src.app.socketio_manager import socketio_manager
     if receiver_id:
         await socketio_manager.emit_chat_list_update(current_user.id)
         await socketio_manager.emit_chat_list_update(receiver_id)
-        await socketio_manager.emit_messages_read(receiver_id, current_user.id)
+        await socketio_manager.emit_messages_read(receiver_id, current_user.id, timestamp=now.isoformat())
     elif group_chat_id:
         from src.app.services.group_chat_service import GroupChatService
         db = get_database()
@@ -720,5 +800,15 @@ async def mark_all_messages_read(
         if group:
             for member_id in group.members:
                 await socketio_manager.emit_chat_list_update(member_id)
+            # Emit a group_read_update so clients can show who read messages
+            for member_id in group.members:
+                member_socket = socketio_manager.user_sockets.get(member_id)
+                if member_socket and socketio_manager.sio:
+                    await socketio_manager.sio.emit('group_read_update', {
+                        "groupId": group_chat_id,
+                        "userId": current_user.id,
+                        "userName": current_user.name,
+                        "seenAt": now.isoformat()
+                    }, room=member_socket)
     
     return {"message": f"Marked {result.modified_count} messages as read"}

@@ -82,8 +82,8 @@ async def root():
 
 # --- 5. Socket.io Initialization ---
 # Initialize Socket.io for real-time messaging after all routes are registered
-socketio_manager.initialize(app)
+# socketio_manager.initialize(app)
 
-# Replace app with Socket.io wrapped app so Socket.io routes work
-# This allows Socket.io to handle /socket.io routes and FastAPI to handle others
-app = socketio_manager.socketio_app
+# # Replace app with Socket.io wrapped app so Socket.io routes work
+# # This allows Socket.io to handle /socket.io routes and FastAPI to handle others
+# app = socketio_manager.socketio_app

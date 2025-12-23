@@ -233,7 +233,7 @@ class SocketIOManager:
             if not sender:
                 return
             
-            # Save message with readBy initialized with sender
+            # Save message with read_by initialized with sender
             message_doc = {
                 "organization_id": group.organization_id,
                 "sender_id": sender_id,
@@ -243,7 +243,8 @@ class SocketIOManager:
                 "deleted": False,
                 "reactions": [],
                 "delivery_status": {},
-                "readBy": [sender_id],  # Initialize with sender
+                "read_by": [sender_id],  # Initialize with sender
+                "read_by_details": {sender_id: datetime.utcnow()},
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
                 "is_read": False
@@ -287,7 +288,7 @@ class SocketIOManager:
                     # Count unread messages for this member
                     unread_count = await messages_collection.count_documents({
                         "group_chat_id": group_id,
-                        "readBy": {"$ne": member_id}
+                        "read_by": {"$ne": member_id}
                     })
                     
                     # Emit unread update to this member
@@ -387,6 +388,7 @@ class SocketIOManager:
                 "reactions": [],
                 "delivery_status": {},
                 "read_by": [sender_id] if chat_type == 'group' else [],
+                "read_by_details": {sender_id: datetime.utcnow()} if chat_type == 'group' else {},
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
                 "is_read": False
@@ -440,7 +442,7 @@ class SocketIOManager:
                 for member_id in group.members:
                     if member_id != sender_id:
                         unread_count = await messages_service.collection.count_documents({
-                            "group_id": group_id,
+                            "group_chat_id": group_id,
                             "read_by": {"$ne": member_id}
                         })
                         member_socket = self.user_sockets.get(member_id)
@@ -896,16 +898,16 @@ class SocketIOManager:
         else:
             print(f"User {receiver_id} not connected, message will be delivered when they reconnect")
     
-    async def emit_messages_read(self, sender_id: str, receiver_id: str):
-        """Emit read receipt to sender"""
+    async def emit_messages_read(self, sender_id: str, receiver_id: str, timestamp: Optional[str] = None):
+        """Emit read receipt to sender with optional timestamp (ISO string)."""
         if not self.sio:
             return
-        
+
         socket_id = self.user_sockets.get(sender_id)
         if socket_id:
             await self.sio.emit('messages_read', {
                 'receiver_id': receiver_id,
-                'timestamp': None  # Can add timestamp if needed
+                'timestamp': timestamp
             }, room=socket_id)
             print(f"Emitted messages_read to user {sender_id}")
     

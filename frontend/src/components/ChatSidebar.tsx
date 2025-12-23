@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiClient } from '@/lib/api';
 import { colors } from '@/lib/colors';
 import { useSocket } from '@/contexts/SocketContext';
+import { formatHeaderTime } from '@/lib/timeUtils';
 
 interface ChatSidebarProps {
   isMobile?: boolean;
@@ -97,7 +98,7 @@ export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProp
             },
             last_message: undefined,
             last_message_time: undefined,
-            unread_count: 0,
+
             is_group: false,
           }));
 
@@ -109,11 +110,11 @@ export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProp
           const timeA = a.lastMessage?.createdAt
             ? new Date(a.lastMessage.createdAt).getTime()
             : (a.last_message_time ? new Date(a.last_message_time).getTime() : 0);
-          
+
           const timeB = b.lastMessage?.createdAt
             ? new Date(b.lastMessage.createdAt).getTime()
             : (b.last_message_time ? new Date(b.last_message_time).getTime() : 0);
-          
+
           // Latest first (descending order)
           return timeB - timeA;
         });
@@ -145,6 +146,7 @@ export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProp
   };
 
   // Real-time updates via Socket.io
+
   useEffect(() => {
     if (!socket || !connected || !user?.org_id) return;
 
@@ -195,7 +197,6 @@ export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProp
             },
             last_message: undefined,
             last_message_time: undefined,
-            unread_count: 0,
             is_group: false,
           }));
 
@@ -207,11 +208,11 @@ export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProp
           const timeA = a.lastMessage?.createdAt
             ? new Date(a.lastMessage.createdAt).getTime()
             : (a.last_message_time ? new Date(a.last_message_time).getTime() : 0);
-          
+
           const timeB = b.lastMessage?.createdAt
             ? new Date(b.lastMessage.createdAt).getTime()
             : (b.last_message_time ? new Date(b.last_message_time).getTime() : 0);
-          
+
           // Latest first (descending order)
           return timeB - timeA;
         });
@@ -257,17 +258,21 @@ export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProp
     };
 
     const handleGroupUnreadUpdate = (data: { groupId: string; unreadCount: number }) => {
-      // Update unread count for the specific group
-      setAllChats(prev => prev.map(chat => {
-        if (chat.is_group && (chat.group_chat_id === data.groupId || chat.chatId === data.groupId)) {
-          return {
-            ...chat,
-            unread_count: data.unreadCount
-          };
-        }
-        return chat;
-      }));
+      setAllChats(prev =>
+        prev.map(chat => {
+          if (chat.group_chat_id === data.groupId) {
+            if (data.unreadCount > 0) {
+              return { ...chat, unread_count: data.unreadCount };
+            }
+            // 🔥 REMOVE unread_count completely
+            const { unread_count, ...rest } = chat;
+            return rest;
+          }
+          return chat;
+        })
+      );
     };
+
 
     socket.on('user_status_update', handleUserStatusUpdate);
     socket.on('new_message', handleNewMessage);
@@ -299,7 +304,7 @@ export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProp
     if (!userId) return null;
     const status = userStatuses[userId];
     if (!status) return null;
-    
+
     if (status.is_online) {
       return (
         <div className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white" style={{ backgroundColor: colors.success }}></div>
@@ -308,19 +313,12 @@ export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProp
     return null;
   };
 
-  const formatLastSeen = (lastSeen: string) => {
-    const date = new Date(lastSeen);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    
-    if (diffMins < 1) return 'just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-    const diffDays = Math.floor(diffHours / 24);
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
+  const formatLastSeen = (lastSeen?: string) => {
+    if (!lastSeen) return 'Offline';
+    // Use IST-aware formatting from formatHeaderTime
+    const formatted = formatHeaderTime(lastSeen);
+    // formatHeaderTime already returns 'just now', 'X min ago', 'X hour(s) ago', or time/date in IST
+    return `Last seen ${formatted}`;
   };
 
   if (loading) {
@@ -378,26 +376,25 @@ export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProp
             filteredChats.map((chat) => {
               const status = chat.receiver_id ? userStatuses[chat.receiver_id] : undefined;
               const chatId = chat.chatId || chat.id || chat.receiver_id || chat.group_chat_id || '';
-              const chatUrl = chat.is_group 
-                ? `/chat/group/${chatId}` 
+              const chatUrl = chat.is_group
+                ? `/chat/group/${chatId}`
                 : `/chat/${chatId}`;
-              
+
               return (
                 <Link
                   key={chat.id || chatId}
                   href={chatUrl}
-                  className={`block p-3 rounded-lg mb-1 transition ${
-                    isActive(chatId, chat.is_group || false)
+                  className={`block p-3 rounded-lg mb-1 transition ${isActive(chatId, chat.is_group || false)
                       ? 'bg-blue-50'
                       : 'hover:bg-gray-50'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center space-x-3">
                     <div className="relative">
                       <div
                         className="w-12 h-12 rounded-full flex items-center justify-center text-white font-semibold"
-                        style={{ 
-                          backgroundColor: chat.is_group ? colors.darkBlue : colors.chatAccent 
+                        style={{
+                          backgroundColor: chat.is_group ? colors.darkBlue : colors.chatAccent
                         }}
                       >
                         {chat.name.charAt(0).toUpperCase()}
@@ -411,7 +408,7 @@ export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProp
                         </h4>
                         {(chat.lastMessage?.createdAt || chat.last_message_time) ? (
                           <span className="text-xs ml-2 whitespace-nowrap" style={{ color: colors.secondaryText }}>
-                            {new Date(chat.lastMessage?.createdAt || chat.last_message_time || '').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            {formatHeaderTime(chat.lastMessage?.createdAt || chat.last_message_time)}
                           </span>
                         ) : !chat.is_group && status && (
                           <span className="text-xs ml-2 whitespace-nowrap" style={{ color: colors.secondaryText }}>
@@ -423,7 +420,7 @@ export function ChatSidebar({ isMobile = false, onOpenSidebar }: ChatSidebarProp
                         <p className="text-sm truncate" style={{ color: colors.secondaryText }}>
                           {chat.lastMessage?.content || chat.last_message || 'No messages yet'}
                         </p>
-                        {chat.unread_count && chat.unread_count > 0 && (
+                        {typeof chat.unread_count === 'number' && chat.unread_count > 0 && (
                           <span
                             className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium text-white whitespace-nowrap"
                             style={{ backgroundColor: colors.chatAccent }}
