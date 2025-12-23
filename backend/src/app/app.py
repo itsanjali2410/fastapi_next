@@ -40,16 +40,16 @@ app.add_event_handler("shutdown", close_mongo_connection)
 
 # ---------------- ROUTES ----------------
 
-app.include_router(auth_router, prefix="/auth", tags=["auth"])
-app.include_router(org_router, prefix="/org", tags=["organization"])
-app.include_router(users_router, prefix="/users", tags=["users"])
-app.include_router(chat_router, prefix="/chat", tags=["chat"])
-app.include_router(group_chat_router, prefix="/chat/groups", tags=["group-chat"])
-app.include_router(task_router, prefix="/tasks", tags=["tasks"])
-app.include_router(invite_router, prefix="/invites", tags=["invites"])
-app.include_router(messages_router, prefix="/messages", tags=["messages"])
-app.include_router(user_status_router, prefix="/users/status", tags=["user-status"])
-app.include_router(upload_router, prefix="/upload", tags=["upload"])
+app.include_router(auth_router, prefix="auth", tags=["auth"])
+app.include_router(org_router, prefix="org", tags=["organization"])
+app.include_router(users_router, prefix="users", tags=["users"])
+app.include_router(chat_router, prefix="chat", tags=["chat"])
+app.include_router(group_chat_router, prefix="chat/groups", tags=["group-chat"])
+app.include_router(task_router, prefix="tasks", tags=["tasks"])
+app.include_router(invite_router, prefix="invites", tags=["invites"])
+app.include_router(messages_router, prefix="messages", tags=["messages"])
+app.include_router(user_status_router, prefix="users/status", tags=["user-status"])
+app.include_router(upload_router, prefix="upload", tags=["upload"])
 
 # ---------------- STATIC FILES ----------------
 
