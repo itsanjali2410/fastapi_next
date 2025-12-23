@@ -3,7 +3,7 @@
  * All requests include credentials: 'include' for HttpOnly cookies
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/';
 
 export interface ApiError {
   detail: string;

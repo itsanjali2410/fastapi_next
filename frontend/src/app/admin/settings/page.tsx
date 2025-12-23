@@ -3,7 +3,9 @@
 import { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
-
+interface Org {
+  name: string;
+}
 export default function SettingsPage() {
   const [orgName, setOrgName] = useState('');
   const [loading, setLoading] = useState(true);
@@ -14,7 +16,7 @@ export default function SettingsPage() {
   useEffect(() => {
     const fetchOrg = async () => {
       try {
-        const org = await apiClient.get('/org/me');
+        const org = await apiClient.get<Org>('/org/me');
         setOrgName(org.name);
       } catch (error) {
         console.error('Failed to fetch organization:', error);

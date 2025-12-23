@@ -729,7 +729,7 @@ export function EnhancedChat({ chatId, chatName, isGroup, receiverId, onBackToLi
       formData.append('file', file);
       
       // Use fetch directly for FormData since apiClient might not handle it correctly
-      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/';
       const response = await fetch(`${API_BASE_URL}/upload/upload`, {
         method: 'POST',
         credentials: 'include',
